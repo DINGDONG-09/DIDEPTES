@@ -1,9 +1,10 @@
- # Entry point CLI untuk menjalankan scanner
+# Entry point CLI untuk menjalankan scanner
 # Menangani argumen, memanggil Orchestrator, dan menulis report.
 
 import argparse
 from scanner.core import Orchestrator
 from scanner.reporting import Reporter
+from scanner.loading import SimpleLoader
 
 def parse_args():
     # Definisi opsi CLI
@@ -18,16 +19,53 @@ def parse_args():
     return p.parse_args()
 
 def main():
+    print("🛡️  Mini-OWASP Web Scanner")
+    print("=" * 40)
+    
     args = parse_args()
-    orch = Orchestrator(base_url=args.target,
-                        max_depth=args.max_depth,
-                        rate=args.rate,
-                        scope=args.scope)
-    findings = orch.run()                   # jalankan seluruh checks
-    Reporter.to_json(findings, args.out)    # simpan JSON
-    Reporter.to_html(findings, args.html)   # simpan HTML
-    print(f"[OK] Report ditulis ke {args.out} & {args.html}")
+    
+    # Show target info
+    print(f"🎯 Target: {args.target}")
+    print(f"📊 Depth: {args.max_depth} | Rate: {args.rate} RPS")
+    print()
+    
+    # Start scanning with loading animation - ONLY AT THE BEGINNING
+    loader = SimpleLoader("🔍 Starting security scan")
+    loader.start()
+    
+    try:
+        orch = Orchestrator(base_url=args.target,
+                            max_depth=args.max_depth,
+                            rate=args.rate,
+                            scope=args.scope)
+        
+        # Stop the initial loader before running detailed checks
+        loader.stop("Security scan initialized")
+        
+        # Now run the scan with individual check animations
+        findings = orch.run()
+        
+        print(f"🎯 Scan completed - Found {len(findings)} total issues")
+        
+    except Exception as e:
+        loader.stop(f"Scan failed: {str(e)}")
+        return
+    
+    # Generate reports with loading
+    report_loader = SimpleLoader("📝 Generating reports")
+    report_loader.start()
+    
+    try:
+        Reporter.to_json(findings, args.out)
+        Reporter.to_html(findings, args.html)
+        report_loader.stop("Reports generated successfully")
+        
+        print(f"📄 JSON: {args.out}")
+        print(f"🌐 HTML: {args.html}")
+        print("✅ All done!")
+        
+    except Exception as e:
+        report_loader.stop(f"Report generation failed: {str(e)}")
 
 if __name__ == "__main__":
     main()
-

@@ -9,6 +9,9 @@ from .checks.headers import HeaderCheck
 from .checks.cookies_cors import CookieCORSCheck
 from .checks.xss import XSSCheck
 from .checks.sqli import SQLiCheck
+from .checks.csrf import CSRFCheck
+from .checks.misconfig import MisconfigCheck
+from .loading import SimpleLoader
 
 
 class Crawler:
@@ -80,19 +83,74 @@ class Orchestrator:
 
     def run(self):
         findings = []
-
-        # 1) Crawl dulu agar dapat lebih dari 1 halaman + peta parameter
-        pages = self.crawler.crawl()
-
-        # 2) Passive checks di setiap halaman yang ditemukan
+        
+        # 1) Crawl first to get pages and parameter map - WITH LOADING
+        crawler_loader = SimpleLoader("🕷️  Crawling website")
+        crawler_loader.start()
+        
+        pages = self.crawler.crawl()  # returns [(url, response), ...]
+        
+        crawler_loader.stop(f"Found {len(pages)} pages")
+        
+        # 2) Extract URLs from pages for active checks
+        crawled_urls = [url for url, resp in pages]
+        
+        # 3) Passive checks on each discovered page - WITH LOADING
+        # Header checks
+        header_loader = SimpleLoader("🔒 Checking security headers")
+        header_loader.start()
+        
+        header_findings = []
         for url, resp in pages:
-            findings += HeaderCheck.inspect(url, resp)
-            findings += CookieCORSCheck.inspect(url, resp)
+            header_findings += HeaderCheck.inspect(url, resp)
+        findings += header_findings
+        
+        header_loader.stop(f"Header check completed - Found {len(header_findings)} issues")
+        
+        # Cookie & CORS checks
+        cookie_loader = SimpleLoader("🍪 Analyzing cookies & CORS")
+        cookie_loader.start()
+        
+        cookie_findings = []
+        for url, resp in pages:
+            cookie_findings += CookieCORSCheck.inspect(url, resp)
+        findings += cookie_findings
+        
+        cookie_loader.stop(f"Cookie & CORS check completed - Found {len(cookie_findings)} issues")
 
-        # 3) Active checks (butuh params_map dari crawler)
+        # 4) Active checks (use params from crawler) - WITH LOADING
         params_map = self.crawler.params
         if params_map:
-            findings += XSSCheck.run(self.http, params_map)
-            findings += SQLiCheck.run(self.http, params_map)
+            # SQL Injection checks
+            sqli_loader = SimpleLoader("💉 Testing for SQL injection")
+            sqli_loader.start()
+            
+            sqli_findings = SQLiCheck.run(self.http, params_map)
+            findings += sqli_findings
+            
+            sqli_loader.stop(f"SQL injection test completed - Found {len(sqli_findings)} vulnerabilities")
+            
+            # XSS checks
+            xss_loader = SimpleLoader("🎭 Testing for Cross-Site Scripting")
+            xss_loader.start()
+            
+            xss_findings = XSSCheck.run(self.http, params_map)
+            findings += xss_findings
+            
+            xss_loader.stop(f"XSS test completed - Found {len(xss_findings)} vulnerabilities")
+        else:
+            print("ℹ️  No parameters found for injection testing")
+        
+        # 5) CSRF and Misconfig checks need URL list - WITH LOADING
+        misc_loader = SimpleLoader("🔧 Checking CSRF & misconfigurations")
+        misc_loader.start()
+        
+        csrf_findings = CSRFCheck.run(self.http, crawled_urls)
+        misconfig_findings = MisconfigCheck.run(self.http, crawled_urls)
+        findings += csrf_findings
+        findings += misconfig_findings
+        
+        total_misc = len(csrf_findings) + len(misconfig_findings)
+        misc_loader.stop(f"CSRF & misconfiguration check completed - Found {total_misc} issues")
 
         return findings

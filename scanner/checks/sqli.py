@@ -13,13 +13,16 @@ class SQLiCheck:
         for url, params in params_map.items():
             for p in params:
                 # Error-based
+                # Test GET parameters
                 try:
+                    # Test GET param
                     r = http.get(_with_param(url, p, "1'"))
                     body = r.text or ""
                     if any(sig.lower() in body.lower() for sig in ERROR_SIGNS):
-                        findings.append({"type":"sqli:error-based","url":url,"param":p,"payload":"1'","evidence":"Pesan error SQL terdeteksi.","severity_score":6})
+                        findings.append({"type":"sqli:error-based-get","url":url,"param":p,"payload":"1'","evidence":"Pesan error SQL terdeteksi.","severity_score":6})
                 except requests.RequestException:
                     pass
+
                 # Time-based
                 try:
                     t0=time.time(); http.get(_with_param(url,p,"1")); base=time.time()-t0
@@ -29,5 +32,16 @@ class SQLiCheck:
                         if slow2-base>2.5:
                             findings.append({"type":"sqli:time-based","url":url,"param":p,"payload":"1 AND SLEEP(3)","evidence":f"Latency naik signifikan (~{round(slow,2)}s).","severity_score":7})
                 except requests.RequestException:
+                    pass
+
+                # Test POST parameters
+                try:
+                    # Test POST param
+                    post_data = {p: "1'"}
+                    r = http.post(url, data=post_data)
+                    body = r.text or ""
+                    if any(sig.lower() in body.lower() for sig in ERROR_SIGNS):
+                        findings.append({"type":"sqli:error-based-post","url":url,"param":p,"payload":"1'","evidence":"POST SQLi detected","severity_score":6})
+                except (requests.RequestException, AttributeError):
                     pass
         return findings
