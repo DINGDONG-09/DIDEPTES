@@ -24,14 +24,22 @@ class Crawler:
         self.max_depth = max_depth
         self.visited = set()
         self.params = {}  # url -> [param1, param2, ...]
+        self.forms = [] # list of {page, action, method, inputs:[{name,value,hidden}]}
         self.base_host = up.urlparse(self.base).hostname
 
     def in_scope(self, url):
         # batasi hanya host yang sama
         return up.urlparse(url).hostname == self.base_host
+    
+    def _abs(self, url, href):
+        # dukung hash-route SPA (#/...) & relative href
+        if href.startswith("#/"):
+            pr = up.urlparse(url)
+            return f"{pr.scheme}://{pr.netloc}{pr.path}{href}"
+        return up.urljoin(url, href)
+
 
     def crawl(self):
-        # BFS sederhana dari base URL
         from collections import deque
         q = deque([(self.base, 0)])
         pages = []
@@ -43,34 +51,83 @@ class Crawler:
             try:
                 r = self.http.get(url)
                 pages.append((url, r))
-                # simpan parameter GET jika ada
+
+                # GET params dari URL
                 qs = up.parse_qs(up.urlparse(url).query)
                 if qs:
                     self.params[url] = list(qs.keys())
-                # temukan link baru
-                for href in self.HREF_RE.findall(r.text or ""):
-                    q.append((up.urljoin(url, href), d + 1))
+
+                # Parse HTML
+                html = r.text or ""
+                soup = BeautifulSoup(html, "html.parser")
+
+                # Link/route discovery
+                for a in soup.find_all("a", href=True):
+                    nxt = self._abs(url, a["href"])
+                    q.append((nxt, d + 1))
+
+                # Form discovery (GET/POST)
+                for form in soup.find_all("form"):
+                    method = (form.get("method") or "GET").upper()
+                    action = form.get("action") or url
+                    action = self._abs(url, action)
+
+                    inputs = []
+                    for inp in form.find_all(["input", "select", "textarea"]):
+                        name = inp.get("name")
+                        if not name:
+                            continue
+                        hidden = (inp.get("type") or "").lower() == "hidden"
+                        # ambil value default (termasuk token CSRF jika ada)
+                        val = inp.get("value") or ""
+                        inputs.append({"name": name, "value": val, "hidden": hidden})
+
+                    if inputs:
+                        self.forms.append({
+                            "page": url,
+                            "action": action,
+                            "method": method,
+                            "inputs": inputs
+                        })
+
+                        # Jika method GET, treat sebagai GET params juga
+                        if method == "GET":
+                            self.params.setdefault(action, [])
+                            for f in inputs:
+                                if f["name"] not in self.params[action]:
+                                    self.params[action].append(f["name"])
+
             except Exception:
                 continue
         return pages
+
+
 
 
 class HttpClient:
     """HTTP client sederhana + rate limit & timeout."""
     def __init__(self, rate=2.0, timeout=10):
         self.sess = requests.Session()
+        # User-Agent sederhana biar beberapa target tidak nolak
+        self.sess.headers.update({"User-Agent": "mini-owasp-scanner/1.0"})
         self.rate = rate
         self.timeout = timeout
         self._last = 0
 
-    def get(self, url, **kw):
-        # rate limiting primitif
+    def _throttle(self):
         now = time.time()
         delay = max(0, (1 / self.rate) - (now - self._last))
         if delay:
             time.sleep(delay)
         self._last = time.time()
+
+    def get(self, url, **kw):
+        self._throttle()
         return self.sess.get(url, timeout=self.timeout, allow_redirects=True, **kw)
+
+    def post(self, url, data=None, **kw):
+        self._throttle()
+        return self.sess.post(url, data=data, timeout=self.timeout, allow_redirects=True, **kw)
 
 
 class Orchestrator:
@@ -152,5 +209,26 @@ class Orchestrator:
         
         total_misc = len(csrf_findings) + len(misconfig_findings)
         misc_loader.stop(f"CSRF & misconfiguration check completed - Found {total_misc} issues")
+
+                # 6) Active checks (POST forms) - WITH LOADING (baru)
+        if self.crawler.forms:
+            # SQLi via POST forms
+            sqli_post_loader = SimpleLoader("💉 Testing SQL injection (POST forms)")
+            sqli_post_loader.start()
+
+            sqli_post_findings = SQLiCheck.run_forms(self.http, self.crawler.forms)
+            findings += sqli_post_findings
+
+            sqli_post_loader.stop(f"SQL injection (POST) completed - Found {len(sqli_post_findings)} vulnerabilities")
+
+            # XSS via POST forms
+            xss_post_loader = SimpleLoader("🎭 Testing Cross-Site Scripting (POST forms)")
+            xss_post_loader.start()
+
+            xss_post_findings = XSSCheck.run_forms(self.http, self.crawler.forms)
+            findings += xss_post_findings
+
+            xss_post_loader.stop(f"XSS (POST) completed - Found {len(xss_post_findings)} vulnerabilities")
+
 
         return findings

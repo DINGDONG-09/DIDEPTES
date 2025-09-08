@@ -43,3 +43,5 @@ Dibuat dengan Python, project ini berfungsi sebagai **mini DAST (Dynamic Applica
 git clone https://github.com/<username>/<repo>.git
 cd <repo>
 
+
+# Mini-Web-Application-Vulnerability-Scanner

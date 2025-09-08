@@ -5,6 +5,8 @@ import argparse
 from scanner.core import Orchestrator
 from scanner.reporting import Reporter
 from scanner.loading import SimpleLoader
+from scanner.reporting_pdf import to_pdf
+from datetime import datetime
 
 def parse_args():
     # Definisi opsi CLI
@@ -16,6 +18,8 @@ def parse_args():
     p.add_argument("--html", default="report.html", help="Path file HTML report")
     p.add_argument("--scope", choices=["same-domain", "same-host"], default="same-domain",
                    help="Batasan scope crawling")
+    p.add_argument("--pdf", default=None, help="Path file PDF report (opsional, jika digunakan hanya export PDF saja)")
+
     return p.parse_args()
 
 def main():
@@ -51,21 +55,28 @@ def main():
         loader.stop(f"Scan failed: {str(e)}")
         return
     
-    # Generate reports with loading
-    report_loader = SimpleLoader("📝 Generating reports")
+        # Generate reports with loading
+    report_loader = SimpleLoader("📝 Generating report")
     report_loader.start()
-    
+
     try:
-        Reporter.to_json(findings, args.out)
-        Reporter.to_html(findings, args.html)
-        report_loader.stop("Reports generated successfully")
-        
-        print(f"📄 JSON: {args.out}")
-        print(f"🌐 HTML: {args.html}")
+        if args.pdf:
+            # PDF only mode
+            to_pdf(findings, datetime.utcnow().isoformat() + "Z", args.pdf)
+            report_loader.stop("PDF report generated successfully")
+            print(f"📄 PDF: {args.pdf}")
+        else:
+            # default: JSON + HTML
+            Reporter.to_json(findings, args.out)
+            Reporter.to_html(findings, args.html)
+            report_loader.stop("Reports generated successfully")
+            print(f"📄 JSON: {args.out}")
+            print(f"🌐 HTML: {args.html}")
+
         print("✅ All done!")
-        
     except Exception as e:
         report_loader.stop(f"Report generation failed: {str(e)}")
+
 
 if __name__ == "__main__":
     main()

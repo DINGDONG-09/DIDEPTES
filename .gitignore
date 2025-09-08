@@ -10,3 +10,4 @@ venv/
 # Reports / artifacts
 *.json
 *.html
+juice.pdf
