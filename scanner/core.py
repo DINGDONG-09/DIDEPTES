@@ -12,6 +12,8 @@ from .checks.sqli import SQLiCheck
 from .checks.csrf import CSRFCheck
 from .checks.misconfig import MisconfigCheck
 from .loading import SimpleLoader
+from .checks.auth_session import AuthSessionCheck
+from .checks.lfi import LFICheck
 
 
 class Crawler:
@@ -195,6 +197,15 @@ class Orchestrator:
             findings += xss_findings
             
             xss_loader.stop(f"XSS test completed - Found {len(xss_findings)} vulnerabilities")
+            
+            # LFI checks
+            lfi_loader = SimpleLoader("📁 Testing for Local File Inclusion")
+            lfi_loader.start()
+            
+            lfi_findings = LFICheck.run(self.http, params_map)
+            findings += lfi_findings
+            
+            lfi_loader.stop(f"LFI test completed - Found {len(lfi_findings)} vulnerabilities")
         else:
             print("ℹ️  No parameters found for injection testing")
         
@@ -229,6 +240,23 @@ class Orchestrator:
             findings += xss_post_findings
 
             xss_post_loader.stop(f"XSS (POST) completed - Found {len(xss_post_findings)} vulnerabilities")
+            
+            # LFI via POST forms
+            lfi_post_loader = SimpleLoader("📁 Testing Local File Inclusion (POST forms)")
+            lfi_post_loader.start()
 
+            lfi_post_findings = LFICheck.run_forms(self.http, self.crawler.forms)
+            findings += lfi_post_findings
+
+            lfi_post_loader.stop(f"LFI (POST) completed - Found {len(lfi_post_findings)} vulnerabilities")
+
+        # Authentication and Session Analysis
+        auth_loader = SimpleLoader("🔐 Analyzing authentication & sessions")
+        auth_loader.start()
+        
+        auth_findings = AuthSessionCheck.run(self.http, crawled_urls)
+        findings += auth_findings
+        
+        auth_loader.stop(f"Authentication analysis completed - Found {len(auth_findings)} issues")
 
         return findings

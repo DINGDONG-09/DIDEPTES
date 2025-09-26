@@ -662,3 +662,20 @@ td:nth-child(4) {
     0%, 100% { opacity: 0.5; }
     50% { opacity: 1; }
 }
+
+/* Authentication-specific styling */
+.auth-section {
+    border-left: 4px solid #9c27b0;
+}
+
+.auth-section .section-title {
+    color: #9c27b0;
+}
+
+tr:has(td:contains("auth:")) {
+    border-left: 4px solid #9c27b0;
+}
+
+tr:has(td:contains("session:")) {
+    border-left: 4px solid #673ab7;
+}
