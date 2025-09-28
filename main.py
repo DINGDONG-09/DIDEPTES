@@ -19,6 +19,8 @@ def parse_args():
     p.add_argument("--scope", choices=["same-domain", "same-host"], default="same-domain",
                    help="Batasan scope crawling")
     p.add_argument("--pdf", default=None, help="Path file PDF report (opsional, jika digunakan hanya export PDF saja)")
+    p.add_argument("--auth-bruteforce", action="store_true", help="Enable authentication bruteforce test")
+
 
     return p.parse_args()
 
@@ -38,6 +40,10 @@ def main():
     loader.start()
     
     try:
+         # ✅ Add auth_options based on CLI args
+        auth_options = {}
+        if args.auth_bruteforce:
+            auth_options["allow_bruteforce"] = True
         orch = Orchestrator(base_url=args.target,
                             max_depth=args.max_depth,
                             rate=args.rate,
@@ -48,7 +54,9 @@ def main():
         
         # Now run the scan with individual check animations
         findings = orch.run()
-        
+        if findings is None:
+            findings = []
+            print("⚠️  Warning: Scanner returned no results")
         print(f"🎯 Scan completed - Found {len(findings)} total issues")
         
     except Exception as e:

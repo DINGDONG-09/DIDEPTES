@@ -14,7 +14,7 @@ from .checks.misconfig import MisconfigCheck
 from .loading import SimpleLoader
 from .checks.auth_session import AuthSessionCheck
 from .checks.lfi import LFICheck
-
+from .checks.ssl_tls_certifcate import SSLTLSCheck
 
 class Crawler:
     HREF_RE = re.compile(r'href=["\'](.*?)["\']', re.I)
@@ -134,14 +134,17 @@ class HttpClient:
 
 class Orchestrator:
     """Orkestrasi: crawl -> passive checks -> active checks."""
-    def __init__(self, base_url, max_depth=1, rate=2.0, scope="same-domain"):
+    def __init__(self, base_url, max_depth=1, rate=2.0, scope="same-domain", auth_options=None):
         self.base_url = base_url.rstrip("/")
         self.http = HttpClient(rate=rate)
-        # ✅ inisialisasi crawler (yang sebelumnya hilang)
+        # ✅ inisialisasi crawler
         self.crawler = Crawler(self.base_url, self.http, max_depth)
+        # store auth/session options passed from CLI/main
+        self.auth_options = auth_options or {}
 
     def run(self):
         findings = []
+        
         
         # 1) Crawl first to get pages and parameter map - WITH LOADING
         crawler_loader = SimpleLoader("🕷️  Crawling website")
@@ -220,7 +223,7 @@ class Orchestrator:
         
         total_misc = len(csrf_findings) + len(misconfig_findings)
         misc_loader.stop(f"CSRF & misconfiguration check completed - Found {total_misc} issues")
-
+        
                 # 6) Active checks (POST forms) - WITH LOADING (baru)
         if self.crawler.forms:
             # SQLi via POST forms
@@ -250,13 +253,43 @@ class Orchestrator:
 
             lfi_post_loader.stop(f"LFI (POST) completed - Found {len(lfi_post_findings)} vulnerabilities")
 
-        # Authentication and Session Analysis
+               # Authentication and Session Analysis
         auth_loader = SimpleLoader("🔐 Analyzing authentication & sessions")
         auth_loader.start()
-        
-        auth_findings = AuthSessionCheck.run(self.http, crawled_urls)
-        findings += auth_findings
-        
-        auth_loader.stop(f"Authentication analysis completed - Found {len(auth_findings)} issues")
 
+        auth_findings = []
+        try:
+            # ambil opsi dari Orchestrator (default dict kosong)
+            auth_opts = getattr(self, "auth_options", {}) or {}
+
+            if isinstance(auth_opts, dict) and auth_opts.get("allow_bruteforce") and hasattr(AuthSessionCheck, "run_enhanced"):
+               maybe = AuthSessionCheck.run_enhanced(self.http, pages, auth_opts)
+               auth_findings = AuthSessionCheck.run_enhanced(self.http, pages, auth_opts)
+            else:
+                maybe = AuthSessionCheck.run(self.http, self.base_url, pages, getattr(self.crawler, "forms", []), auth_opts)
+                auth_findings = AuthSessionCheck.run(self.http, self.base_url, pages, self.crawler.forms, auth_opts)
+            auth_findings = maybe if isinstance(maybe, list) else (list(maybe) if maybe is not None else [])
+        except Exception as e:
+            # kalau error, jangan hentikan scan
+            auth_findings = [{
+                "type": "auth:check-error",
+                "url": self.base_url,
+                "evidence": f"Authentication check raised exception: {e}",
+                "severity_score": 2
+            }]
+        finally:
+            findings.extend(auth_findings)
+            count = len(auth_findings) if isinstance(auth_findings, list) else 0
+            auth_loader.stop(f"Authentication analysis completed - Found {count} issues")
+            # 7) SSL/TLS certificate checks
+        if self.base_url.startswith('https://'):
+            ssl_loader = SimpleLoader("🔐 Checking SSL/TLS configuration")
+            ssl_loader.start()
+
+            ssl_findings = SSLTLSCheck.run(self.base_url, self.http)
+            findings += ssl_findings
+
+            ssl_loader.stop(f"SSL/TLS check completed - Found {len(ssl_findings)} issues")
+        else:
+            print("ℹ️  Skipping SSL/TLS checks for non-HTTPS URL")    
         return findings
