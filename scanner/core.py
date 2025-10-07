@@ -43,7 +43,22 @@ class Crawler:
 
     def crawl(self):
         from collections import deque
+        from bs4 import XMLParsedAsHTMLWarning
+        import warnings
+        
+        warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
+        
+        # Add common API endpoints for better coverage
+        common_paths = [
+            "/api", "/rest", "/admin", "/api/users", "/api/products",
+            "/api/feedback", "/rest/user", "/rest/admin", "/ftp"
+        ]
+        
         q = deque([(self.base, 0)])
+        # Add common paths to queue
+        for path in common_paths:
+            q.append((self.base + path, 0))
+        
         pages = []
         while q:
             url, d = q.popleft()
@@ -61,7 +76,13 @@ class Crawler:
 
                 # Parse HTML
                 html = r.text or ""
-                soup = BeautifulSoup(html, "html.parser")
+                
+                # Use XML parser for XML content
+                content_type = r.headers.get('Content-Type', '').lower()
+                if 'xml' in content_type:
+                    soup = BeautifulSoup(html, "xml")  # requires lxml
+                else:
+                    soup = BeautifulSoup(html, "html.parser")
 
                 # Link/route discovery
                 for a in soup.find_all("a", href=True):

@@ -25,8 +25,13 @@ def parse_args():
     return p.parse_args()
 
 def main():
-    print("🛡️  Mini-OWASP Web Scanner")
-    print("=" * 40)
+    print(r"""_____ _____ _____  ______ _____ _______ ______  _____ _______    __  
+ |  __ \_   _|  __ \|  ____|  __ \__   __|  ____|/ ____|__   __|   \ \ 
+ | |  | || | | |  | | |__  | |__) | | |  | |__  | (___    | |     (_) |
+ | |  | || | | |  | |  __| |  ___/  | |  |  __|  \___ \   | |       | |
+ | |__| || |_| |__| | |____| |      | |  | |____ ____) |  | |      _| |
+ |_____/_____|_____/|______|_|      |_|  |______|_____/   |_|     (_) |
+                                                                   /_/""")
     
     args = parse_args()
     
@@ -47,7 +52,8 @@ def main():
         orch = Orchestrator(base_url=args.target,
                             max_depth=args.max_depth,
                             rate=args.rate,
-                            scope=args.scope)
+                            scope=args.scope,
+                            auth_options=auth_options)  # ← ADD THIS
         
         # Stop the initial loader before running detailed checks
         loader.stop("Security scan initialized")
