@@ -1,4 +1,4 @@
-# Menulis hasil scan ke JSON/HTML sederhana.
+
 
 import json, html, os
 from datetime import datetime
@@ -6,7 +6,7 @@ from datetime import datetime
 class Reporter:
     @staticmethod
     def to_json(findings, path):
-        # Also update JSON timestamp format
+        
         formatted_time = Reporter._format_timestamp()
         data = {"generated_at": formatted_time, "findings": findings}
         with open(path, "w", encoding="utf-8") as f:
@@ -14,16 +14,16 @@ class Reporter:
 
     @staticmethod
     def to_html(findings, path):
-        # Load CSS from external file
+        
         css_content = Reporter._load_css()
         
-        # Group findings by severity
+        
         grouped_findings = Reporter._group_by_severity(findings)
         
-        # Generate sections HTML
+        
         sections_html = Reporter._generate_sections(grouped_findings)
         
-        # Format timestamp without seconds
+        
         formatted_time = Reporter._format_timestamp()
         
         doc = f"""<!DOCTYPE html>

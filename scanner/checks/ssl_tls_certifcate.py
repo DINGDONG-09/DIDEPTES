@@ -1,20 +1,3 @@
-"""
-SSL/TLS Security Checker
-
-This module performs comprehensive SSL/TLS security analysis based on:
-- OWASP Top 10 2021 (A02: Cryptographic Failures)
-- OWASP Transport Layer Security Cheat Sheet
-- Industry best practices for SSL/TLS security
-
-Checks performed:
-- Certificate validity and expiration
-- Protocol version security (TLS 1.2+)
-- Cipher suite strength and security
-- Certificate chain validation
-- Common SSL/TLS vulnerabilities
-- Perfect Forward Secrecy support
-- Certificate transparency compliance
-"""
 
 import ssl
 import socket
@@ -29,21 +12,21 @@ import os
 class SSLTLSCheck:
     """SSL/TLS security assessment"""
     
-    # Weak cipher patterns (based on OWASP recommendations)
+    
     WEAK_CIPHERS = [
-        r'.*NULL.*',           # Null encryption
-        r'.*EXPORT.*',         # Export-grade ciphers
-        r'.*DES.*',           # DES encryption
-        r'.*RC4.*',           # RC4 stream cipher
-        r'.*MD5.*',           # MD5 hash
-        r'.*SHA1.*',          # SHA1 hash (deprecated)
-        r'.*ADH.*',           # Anonymous DH
-        r'.*AECDH.*',         # Anonymous ECDH
-        r'.*LOW.*',           # Low security ciphers
-        r'.*EXP.*',           # Export ciphers
+        r'.*NULL.*',           
+        r'.*EXPORT.*',         
+        r'.*DES.*',          
+        r'.*RC4.*',           
+        r'.*MD5.*',           
+        r'.*SHA1.*',          
+        r'.*ADH.*',           
+        r'.*AECDH.*',        
+        r'.*LOW.*',           
+        r'.*EXP.*',           
     ]
     
-    # Secure cipher suites (OWASP recommended)
+   
     RECOMMENDED_CIPHERS = [
         'ECDHE-RSA-AES256-GCM-SHA384',
         'ECDHE-RSA-AES128-GCM-SHA256',
@@ -59,7 +42,7 @@ class SSLTLSCheck:
         findings = []
         parsed_url = urlparse(base_url)
         
-        # Only check HTTPS URLs
+        
         if parsed_url.scheme != 'https':
             return [{
                 "type": "ssl:not-https",
@@ -73,11 +56,11 @@ class SSLTLSCheck:
         port = parsed_url.port or 443
         
         try:
-            # Get SSL certificate and connection info
+            
             cert_info = SSLTLSCheck._get_certificate_info(hostname, port)
             ssl_info = SSLTLSCheck._get_ssl_connection_info(hostname, port)
             
-            # Perform various SSL/TLS checks
+            
             findings.extend(SSLTLSCheck._check_certificate_validity(base_url, cert_info))
             findings.extend(SSLTLSCheck._check_certificate_expiration(base_url, cert_info))
             findings.extend(SSLTLSCheck._check_protocol_versions(base_url, hostname, port))
@@ -122,10 +105,10 @@ class SSLTLSCheck:
     def _get_ssl_connection_info(hostname: str, port: int) -> Dict:
         """Get detailed SSL connection information"""
         try:
-            # Try different SSL contexts to gather information
+            
             info = {}
             
-            # Get supported protocols
+            
             protocols = ['TLSv1', 'TLSv1_1', 'TLSv1_2', 'TLSv1_3']
             supported_protocols = []
             
@@ -144,7 +127,7 @@ class SSLTLSCheck:
             
             info['supported_protocols'] = supported_protocols
             
-            # Get cipher information with modern context
+            
             context = ssl.create_default_context()
             context.check_hostname = False
             context.verify_mode = ssl.CERT_NONE
@@ -174,7 +157,7 @@ class SSLTLSCheck:
                 "severity_score": 9
             }]
         
-        # Check certificate subject
+        
         subject = dict(x[0] for x in cert.get('subject', []))
         common_name = subject.get('commonName', '')
         
@@ -187,7 +170,7 @@ class SSLTLSCheck:
                 "severity_score": 6
             })
         
-        # Check Subject Alternative Names (SAN)
+        
         san_list = []
         for san in cert.get('subjectAltName', []):
             if san[0] == 'DNS':
@@ -196,7 +179,7 @@ class SSLTLSCheck:
         parsed_url = urlparse(base_url)
         hostname = parsed_url.hostname
         
-        # Check if hostname matches certificate
+        
         hostname_match = False
         if common_name == hostname or common_name == f"*.{hostname}":
             hostname_match = True
@@ -212,12 +195,12 @@ class SSLTLSCheck:
                 "severity_score": 8
             })
         
-        # Check key size
+        
         public_key = cert.get('publicKey')
         if public_key:
-            # This is a simplified check - in real implementation you'd parse the key properly
+            
             cert_der = cert_info.get('cert_der')
-            if cert_der and len(cert_der) < 1000:  # Very rough estimation
+            if cert_der and len(cert_der) < 1000:
                 findings.append({
                     "type": "ssl:weak-key-size",
                     "url": base_url,
@@ -237,7 +220,7 @@ class SSLTLSCheck:
         if not cert:
             return []
         
-        # Parse expiration date
+       
         not_after = cert.get('notAfter')
         if not_after:
             try:
@@ -286,7 +269,7 @@ class SSLTLSCheck:
         """Check supported SSL/TLS protocol versions"""
         findings = []
         
-        # Test for insecure protocols
+        
         insecure_protocols = {
             'SSLv2': {'attr': None, 'severity': 10},
             'SSLv3': {'attr': 'PROTOCOL_SSLv3', 'severity': 10},
@@ -311,10 +294,10 @@ class SSLTLSCheck:
                                 "severity_score": config['severity']
                             })
                 except:
-                    # Protocol not supported (good)
+                    
                     pass
         
-        # Check if TLS 1.2+ is supported
+       
         secure_protocols_supported = False
         for protocol_attr in ['PROTOCOL_TLSv1_2', 'PROTOCOL_TLS']:
             if hasattr(ssl, protocol_attr):
@@ -352,7 +335,7 @@ class SSLTLSCheck:
         
         cipher_name = cipher_info[0] if cipher_info else ""
         
-        # Check for weak ciphers
+        
         for weak_pattern in SSLTLSCheck.WEAK_CIPHERS:
             if re.match(weak_pattern, cipher_name, re.IGNORECASE):
                 findings.append({
@@ -364,7 +347,7 @@ class SSLTLSCheck:
                 })
                 break
         
-        # Check if using recommended ciphers
+        
         using_recommended = any(rec_cipher in cipher_name for rec_cipher in SSLTLSCheck.RECOMMENDED_CIPHERS)
         
         if not using_recommended and cipher_name:
@@ -387,7 +370,7 @@ class SSLTLSCheck:
         if not cert:
             return []
         
-        # Check if self-signed
+        
         issuer = dict(x[0] for x in cert.get('issuer', []))
         subject = dict(x[0] for x in cert.get('subject', []))
         
@@ -400,7 +383,7 @@ class SSLTLSCheck:
                 "severity_score": 7
             })
         
-        # Check certificate authority
+        
         issuer_cn = issuer.get('commonName', '')
         known_cas = [
             'Let\'s Encrypt', 'DigiCert', 'Comodo', 'GeoTrust', 
@@ -431,7 +414,7 @@ class SSLTLSCheck:
         
         cipher_name = cipher_info[0] if cipher_info else ""
         
-        # Check for PFS-enabled key exchange
+        
         pfs_kex = ['ECDHE', 'DHE']
         has_pfs = any(kex in cipher_name for kex in pfs_kex)
         
@@ -451,26 +434,25 @@ class SSLTLSCheck:
         """Check for common SSL/TLS vulnerabilities"""
         findings = []
         
-        # Check for SSL compression (CRIME vulnerability)
+        
         try:
             context = ssl.create_default_context()
             context.check_hostname = False
             context.verify_mode = ssl.CERT_NONE
-            # Note: This is a simplified check
+            
             
             with socket.create_connection((hostname, port), timeout=10) as sock:
                 with context.wrap_socket(sock, server_hostname=hostname) as ssock:
-                    # In a real implementation, you'd check compression settings
-                    # This is a placeholder for demonstration
+                    
+                    
                     pass
                     
         except Exception:
             pass
         
-        # Check for weak DH parameters (simplified)
+       
         try:
-            # This would require more sophisticated testing in practice
-            # For now, we'll check if DHE ciphers are available with weak parameters
+            
             pass
         except Exception:
             pass
@@ -486,12 +468,11 @@ class SSLTLSCheck:
         if not cert:
             return []
         
-        # Check for SCT extension (simplified check)
+        
         extensions = cert.get('extensions', [])
         has_sct = False
         
-        # In a real implementation, you'd parse the extensions properly
-        # This is a placeholder check
+        
         
         if not has_sct:
             findings.append({
@@ -504,7 +485,7 @@ class SSLTLSCheck:
         
         return findings
 
-# Additional utility functions for advanced SSL/TLS testing
+
 class SSLTLSAdvanced:
     """Advanced SSL/TLS security testing utilities"""
     
@@ -526,7 +507,7 @@ class SSLTLSAdvanced:
                     "severity_score": 6
                 })
             else:
-                # Check HSTS configuration
+                
                 if 'max-age=' not in hsts_header.lower():
                     findings.append({
                         "type": "ssl:hsts-no-max-age",
@@ -536,12 +517,12 @@ class SSLTLSAdvanced:
                         "severity_score": 5
                     })
                 else:
-                    # Extract max-age value
+                   
                     import re
                     max_age_match = re.search(r'max-age=(\d+)', hsts_header.lower())
                     if max_age_match:
                         max_age = int(max_age_match.group(1))
-                        if max_age < 31536000:  # Less than 1 year
+                        if max_age < 31536000:
                             findings.append({
                                 "type": "ssl:hsts-short-max-age",
                                 "url": base_url,
@@ -570,15 +551,15 @@ class SSLTLSAdvanced:
         
         return findings
 
-# Integration function to run all SSL/TLS checks
+
 def run_complete_ssl_tls_check(http, base_url: str) -> List[Dict[str, Any]]:
     """Run complete SSL/TLS security assessment"""
     findings = []
     
-    # Core SSL/TLS checks
+    
     findings.extend(SSLTLSCheck.run(http, base_url))
     
-    # HSTS check
+    
     findings.extend(SSLTLSAdvanced.check_hsts_header(http, base_url))
     
     return findings

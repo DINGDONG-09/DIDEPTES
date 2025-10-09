@@ -14,24 +14,24 @@ class CSRFCheck:
                     
                 soup = BeautifulSoup(r.text, 'html.parser')
                 
-                # Check for forms
+               
                 forms = soup.find_all('form')
                 for form in forms:
                     method = form.get('method', 'get').lower()
                     action = form.get('action', '')
                     
-                    # Skip GET forms
+                    
                     if method == 'get':
                         continue
                     
-                    # Look for CSRF tokens
+                    
                     csrf_found = False
                     csrf_patterns = [
                         'csrf', 'token', '_token', 'authenticity_token',
                         'csrftoken', 'csrf_token', '_csrf'
                     ]
                     
-                    # Check hidden inputs
+                   
                     hidden_inputs = form.find_all('input', {'type': 'hidden'})
                     for hidden in hidden_inputs:
                         name = hidden.get('name', '').lower()
@@ -39,7 +39,7 @@ class CSRFCheck:
                             csrf_found = True
                             break
                     
-                    # Check meta tags
+                    
                     if not csrf_found:
                         meta_csrf = soup.find('meta', {'name': re.compile(r'csrf|token', re.I)})
                         if meta_csrf:

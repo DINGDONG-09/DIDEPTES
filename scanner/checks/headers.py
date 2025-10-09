@@ -1,9 +1,9 @@
- # Passive check: memeriksa header keamanan penting pada response target.
+ 
 
 def _score_header(value, ok_condition):
     if value is None:
-        return 0                 # tidak ada → netral (perlu perbaikan)
-    return 2 if ok_condition(value) else -1  # benar → +2, salah → -1
+        return 0                 
+    return 2 if ok_condition(value) else -1  
 
 class HeaderCheck:
     @staticmethod
@@ -11,7 +11,7 @@ class HeaderCheck:
         h = {k.lower(): v for k, v in resp.headers.items()}
         findings = []
 
-        # CSP
+       
         csp = h.get("content-security-policy")
         csp_ok = lambda v: "default-src" in v and "unsafe-inline" not in v
         findings.append({
@@ -23,7 +23,7 @@ class HeaderCheck:
             "recommendation": "Tambahkan CSP ketat; hindari 'unsafe-inline', gunakan nonce/hash."
         })
 
-        # HSTS
+        
         hsts = h.get("strict-transport-security")
         hsts_ok = lambda v: "max-age" in v
         findings.append({
@@ -35,7 +35,7 @@ class HeaderCheck:
             "recommendation": "Aktifkan HSTS (HTTPS saja) dengan max-age memadai."
         })
 
-        # X-Frame-Options
+       
         xfo = h.get("x-frame-options")
         findings.append({
             "type": "header:XFO",
@@ -46,7 +46,7 @@ class HeaderCheck:
             "recommendation": "Set 'DENY' atau 'SAMEORIGIN' atau gunakan 'frame-ancestors' di CSP."
         })
 
-        # X-Content-Type-Options
+       
         xcto = h.get("x-content-type-options")
         findings.append({
             "type": "header:XCTO",
@@ -57,7 +57,7 @@ class HeaderCheck:
             "recommendation": "Set 'X-Content-Type-Options: nosniff'."
         })
 
-        # Referrer-Policy
+       
         rp = h.get("referrer-policy")
         findings.append({
             "type": "header:Referrer-Policy",
@@ -68,7 +68,7 @@ class HeaderCheck:
             "recommendation": "Gunakan 'no-referrer' atau 'strict-origin-when-cross-origin'."
         })
 
-        # Permissions-Policy
+       
         pp = h.get("permissions-policy")
         findings.append({
             "type": "header:Permissions-Policy",

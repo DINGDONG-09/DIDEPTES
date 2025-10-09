@@ -5,7 +5,7 @@ class MisconfigCheck:
     def run(http, crawled_urls):
         findings = []
         
-        # Common sensitive files/directories
+        
         sensitive_paths = [
             '/.env', '/.git/config', '/config.php', '/wp-config.php',
             '/admin', '/phpmyadmin', '/.htaccess', '/robots.txt',
@@ -17,22 +17,22 @@ class MisconfigCheck:
         if not base_url:
             return findings
             
-        # Extract base URL
+        
         from urllib.parse import urlparse
         parsed = urlparse(base_url)
         base = f"{parsed.scheme}://{parsed.netloc}"
         
-        # Test sensitive files
+        
         for path in sensitive_paths:
             try:
                 test_url = base + path
                 r = http.get(test_url)
                 
                 if r.status_code == 200:
-                    # Check content to avoid false positives
+                    
                     content = r.text.lower()
                     
-                    # Skip if it looks like a custom 404 page
+                    
                     if len(content) > 100 and not any(x in content for x in ['not found', '404', 'error']):
                         severity = MisconfigCheck._get_severity(path)
                         findings.append({
@@ -45,7 +45,7 @@ class MisconfigCheck:
                         })
                         
                 elif r.status_code == 403:
-                    # Directory listing forbidden but exists
+                    
                     if path.endswith('/'):
                         findings.append({
                             "type": "misconfig:directory-listing",
@@ -59,12 +59,12 @@ class MisconfigCheck:
             except Exception:
                 pass
         
-        # Check for common misconfigurations in discovered URLs
+        
         for url in crawled_urls:
             try:
                 r = http.get(url)
                 
-                # Check for debug information
+                
                 if r.status_code == 200:
                     content = r.text.lower()
                     debug_patterns = [
@@ -85,10 +85,10 @@ class MisconfigCheck:
                             })
                             break
                             
-                # Check server headers for version disclosure
+                
                 server = r.headers.get('Server', '')
                 if server:
-                    # Look for version numbers
+                   
                     if re.search(r'\d+\.\d+', server):
                         findings.append({
                             "type": "misconfig:version-disclosure",

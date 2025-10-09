@@ -20,13 +20,13 @@ def xss_payloads(base_payloads=None):
 
     out = list(base_payloads)
 
-    # Encoded variants
+    
     encoded = [
         urllib.parse.quote(p) for p in base_payloads
     ]
     out.extend(encoded)
 
-    # Event handler payloads
+    
     event_payloads = [
         "<body onload=alert(1)>",
         "<input autofocus onfocus=alert(1)>",
@@ -35,7 +35,7 @@ def xss_payloads(base_payloads=None):
     ]
     out.extend(event_payloads)
 
-    # Deduplicate
+    
     seen = set()
     res = []
     for p in out:
@@ -144,7 +144,7 @@ class XSSCheck:
 
                     response = http.post(form["action"], data=data)
 
-                    # Reflected XSS check
+                    
                     if cls._is_vulnerable_reflected(response, payload):
                         findings.append({
                             "type": "XSS (Reflected - POST)",
@@ -159,7 +159,7 @@ class XSSCheck:
                         })
                         break
 
-                    # Stored XSS check (crawl subsequent pages)
+                   
                     if crawl_pages:
                         for crawl_url, crawl_resp in crawl_pages:
                             if cls._is_vulnerable_reflected(crawl_resp, payload):

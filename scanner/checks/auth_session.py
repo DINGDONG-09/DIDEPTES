@@ -1,21 +1,3 @@
-# scanner/auth_session.py
-"""
-Auth & Session checks for the vuln-scanner project.
-
-This file is a cleaned, enhanced rewrite that:
-- preserves original checks (session cookie checks, login form checks, session-fixation)
-- adds safe, optional brute-force (run_enhanced with allow_bruteforce flag)
-- improves brute-force by including hidden inputs/CSRF tokens in payloads
-- uses conservative success detection heuristics and exponential backoff on 429
-- provides helpers for logout checks and cookie comparisons
-
-USAGE:
-- Core compatibility: AuthSessionCheck.run(http, base_url, pages, forms, options=None)
-- Enhanced runner: AuthSessionCheck.run_enhanced(http, crawled_pages, options=None)
-  - options keys: allow_bruteforce (bool), bruteforce_limit (int), bruteforce_wordlist_url (str),
-    credentials: {"username": "...", "password": "..."},
-    protected_path: "/account", baseline_page: (url, resp)
-"""
 
 import re
 import time
@@ -23,15 +5,13 @@ import requests
 from urllib.parse import urljoin, urlparse, quote
 from typing import List, Dict, Any, Tuple, Optional, Iterable
 
-# Default public wordlist (SecLists 10k common). Raw URL:
+
 _DEFAULT_SECLISTS_10K_RAW = "https://raw.githubusercontent.com/danielmiessler/SecLists/master/Passwords/Common-Credentials/10k-most-common.txt"
 
-# Heuristics for session cookie names
+
 _SESSION_COOKIE_HINTS = ["sessionid", "jsessionid", "phpsessid", "asp.net_sessionid", "session", "sid", "auth", "token"]
 
-# -----------------------------------------------------------------------------
-# Helper functions
-# -----------------------------------------------------------------------------
+
 def _fetch_wordlist(url: str = _DEFAULT_SECLISTS_10K_RAW, max_lines: int = 1000, timeout: int = 6) -> Iterable[str]:
     """Fetch plaintext wordlist from URL (streamed). Yields up to max_lines entries.
     Falls back to small builtin list on failure."""
@@ -50,7 +30,7 @@ def _fetch_wordlist(url: str = _DEFAULT_SECLISTS_10K_RAW, max_lines: int = 1000,
             if count >= max_lines:
                 break
     except Exception:
-        # fallback list (very small)
+        
         for p in ("password", "123456", "12345678", "qwerty", "admin", "letmein", "welcome", "1234"):
             yield p
 
@@ -85,7 +65,7 @@ def _build_payload_with_hidden(form: Dict[str, Any], username_field: str, passwo
         elif inp.get("hidden") or ("csrf" in name.lower()) or inp.get("value"):
             data[name] = inp.get("value", "")
         else:
-            # filler value
+           
             data[name] = inp.get("value") or "test"
     return data
 
@@ -97,7 +77,7 @@ def _is_login_success(resp, baseline_text: str = "", username_hint: str = "") ->
     except Exception:
         pass
 
-    # JSON API responses
+    
     try:
         j = resp.json()
         if isinstance(j, dict) and (j.get("token") or j.get("access_token") or j.get("success") or j.get("authenticated")):
@@ -105,7 +85,7 @@ def _is_login_success(resp, baseline_text: str = "", username_hint: str = "") ->
     except Exception:
         pass
 
-    # cookies set
+    
     try:
         cookies = getattr(resp, "cookies", None)
         if cookies:
@@ -178,9 +158,7 @@ def _normalize_action(base_url: str, action: Optional[str]) -> str:
         return base_url
     return urljoin(base_url, action)
 
-# -----------------------------------------------------------------------------
-# Primary class: keep original checks but update signatures for compatibility
-# -----------------------------------------------------------------------------
+
 class AuthSessionCheck:
     """
     Provides:
@@ -200,22 +178,22 @@ class AuthSessionCheck:
         """
         findings: List[Dict[str, Any]] = []
 
-        # Iterate pages and run legacy checks
+        
         for url, resp in pages:
             try:
-                # session management & cookie checks
+                
                 findings.extend(AuthSessionCheck._check_session_management(url, resp))
 
-                # authentication mechanisms & login form checks
+                
                 findings.extend(AuthSessionCheck._check_authentication(url, resp))
 
-                # detailed session cookie analysis
+                
                 findings.extend(AuthSessionCheck._check_session_cookies(url, resp))
 
-                # login form checks (CSRF presence, autocomplete)
+               
                 findings.extend(AuthSessionCheck._check_login_forms(url, resp, http))
 
-                # session fixation using original helper
+                
                 findings.extend(AuthSessionCheck._check_session_fixation(url, http))
 
             except Exception as e:
@@ -224,7 +202,7 @@ class AuthSessionCheck:
 
         return findings
 
-    # --- Original-style helper methods (preserved & cleaned) ---
+    
 
     @staticmethod
     def _check_session_management(url, resp):
@@ -239,7 +217,7 @@ class AuthSessionCheck:
             session_indicators = _SESSION_COOKIE_HINTS
 
             if any(indicator in cookie_name for indicator in session_indicators):
-                # Secure flag
+                
                 if not getattr(cookie, "secure", False):
                     findings.append({
                         "type": "session:insecure-cookie",
@@ -249,7 +227,7 @@ class AuthSessionCheck:
                         "recommendation": "Add Secure flag to session cookies to prevent transmission over HTTP",
                         "severity_score": 6
                     })
-                # HttpOnly detection (Requests CookieJar does not expose HttpOnly directly for all jars; best-effort)
+                
                 try:
                     has_httponly = "httponly" in getattr(cookie, "rest", {}) or getattr(cookie, "httponly", False)
                 except Exception:
@@ -263,7 +241,7 @@ class AuthSessionCheck:
                         "recommendation": "Add HttpOnly flag to session cookies to prevent XSS attacks",
                         "severity_score": 5
                     })
-                # SameSite check (best-effort)
+                
                 samesite = None
                 try:
                     samesite = getattr(cookie, "rest", {}).get("samesite") if hasattr(cookie, "rest") else None
@@ -278,7 +256,7 @@ class AuthSessionCheck:
                         "recommendation": "Add SameSite attribute to session cookies to prevent CSRF attacks",
                         "severity_score": 4
                     })
-                # weak session id (length)
+               
                 try:
                     if len(getattr(cookie, "value", "") or "") < 16:
                         findings.append({
@@ -299,7 +277,7 @@ class AuthSessionCheck:
         content = getattr(resp, "text", "") or ""
         headers = getattr(resp, "headers", {}) or {}
 
-        # Basic/Digest detection
+        
         if "www-authenticate" in headers:
             auth_header = headers.get("www-authenticate", "").lower()
             if "basic" in auth_header:
@@ -319,7 +297,7 @@ class AuthSessionCheck:
                     "severity_score": 3
                 })
 
-        # Login form over HTTP
+        
         try:
             if urlparse(url).scheme == "http":
                 login_patterns = [
@@ -341,7 +319,7 @@ class AuthSessionCheck:
         except Exception:
             pass
 
-        # password autocomplete
+       
         try:
             password_fields = re.findall(r'<input[^>]*type\s*=\s*["\']password["\'][^>]*>', content, flags=re.I)
             for field in password_fields:
@@ -365,7 +343,7 @@ class AuthSessionCheck:
         try:
             for cookie in getattr(resp, "cookies", []) or []:
                 value = getattr(cookie, "value", "") or ""
-                # sequential numeric
+                
                 if value.isdigit() and len(value) < 10:
                     findings.append({
                         "type": "session:predictable-session-id",
@@ -375,7 +353,7 @@ class AuthSessionCheck:
                         "recommendation": "Use cryptographically secure random session ID generation",
                         "severity_score": 8
                     })
-                # timestamp-like
+                
                 timestamp_patterns = [r'\d{10}', r'\d{13}', r'\d{4}-\d{2}-\d{2}']
                 for pattern in timestamp_patterns:
                     if re.search(pattern, value):
@@ -397,7 +375,7 @@ class AuthSessionCheck:
         findings = []
         content = getattr(resp, "text", "") or ""
 
-        # find forms
+       
         try:
             form_pattern = r'<form[^>]*>(.*?)</form>'
             forms = re.findall(form_pattern, content, flags=re.DOTALL | re.IGNORECASE)
@@ -418,8 +396,8 @@ class AuthSessionCheck:
                             "recommendation": "Implement CSRF tokens in login forms",
                             "severity_score": 6
                         })
-                    # account lockout detection placeholder (non-destructive)
-                    # actual brute-force should be enabled only with explicit flag
+                   
+                    
         except Exception:
             pass
 
@@ -458,22 +436,9 @@ class AuthSessionCheck:
             pass
         return findings
 
-# -----------------------------------------------------------------------------
-# Enhanced runner: safe & optional bruteforce + reuse existing checks
-# -----------------------------------------------------------------------------
+
 def run_enhanced(http, crawled_pages: List[Tuple[str, Any]], options: Dict[str, Any] = None) -> List[Dict[str, Any]]:
-    """
-    Enhanced runner:
-    - http: requests.Session-like
-    - crawled_pages: list of (url, response)
-    - options:
-        - allow_bruteforce: bool (default False)
-        - bruteforce_wordlist_url: str (optional)
-        - bruteforce_limit: int (default 200)
-        - credentials: {"username": "...", "password": "..."} optional
-        - protected_path: str optional
-        - baseline_page: optional (url, resp) tuple
-    """
+ 
     opts = options or {}
     allow_bruteforce = bool(opts.get("allow_bruteforce", False))
     wordlist_url = opts.get("bruteforce_wordlist_url", _DEFAULT_SECLISTS_10K_RAW)
@@ -483,7 +448,7 @@ def run_enhanced(http, crawled_pages: List[Tuple[str, Any]], options: Dict[str, 
 
     findings: List[Dict[str, Any]] = []
 
-    # baseline page text (for login detection heuristics)
+    
     baseline_text = ""
     if opts.get("baseline_page"):
         baseline_text = getattr(opts["baseline_page"][1], "text", "") or ""
@@ -491,11 +456,11 @@ def run_enhanced(http, crawled_pages: List[Tuple[str, Any]], options: Dict[str, 
         if crawled_pages:
             baseline_text = getattr(crawled_pages[0][1], "text", "") or ""
 
-    # reuse original session-fixation check if present
+    
     try:
         findings += [f for url, resp in crawled_pages for f in AuthSessionCheck._check_session_fixation(url, http)]
     except Exception:
-        # fallback lightweight probe if original check fails
+        
         try:
             for page_url, _ in crawled_pages[:3]:
                 try:
@@ -520,7 +485,7 @@ def run_enhanced(http, crawled_pages: List[Tuple[str, Any]], options: Dict[str, 
         except Exception:
             pass
 
-    # logout checks: best-effort
+   
     try:
         for page_url, resp in crawled_pages[:5]:
             txt = getattr(resp, "text", "") or ""
@@ -542,9 +507,9 @@ def run_enhanced(http, crawled_pages: List[Tuple[str, Any]], options: Dict[str, 
                 rprot = http.get(prot)
                 code = getattr(rprot, "status_code", None)
                 body = getattr(rprot, "text", "") or ""
-                # simple heuristic: if page still shows signs of login, flag issue
+                
                 if code == 200 and ("logout" not in body.lower() and "login" not in body.lower()):
-                    # not a strong proof but flags for manual review
+                    
                     findings.append({
                         "type": "auth:logout-issue",
                         "url": prot,
@@ -563,7 +528,7 @@ def run_enhanced(http, crawled_pages: List[Tuple[str, Any]], options: Dict[str, 
     except Exception:
         pass
 
-    # Brute-force (optional & controlled)
+    
     if allow_bruteforce:
         login_pages = _extract_login_pages_from_crawled(crawled_pages)
         if not login_pages and crawled_pages:
@@ -590,11 +555,10 @@ def run_enhanced(http, crawled_pages: List[Tuple[str, Any]], options: Dict[str, 
             if not ufield:
                 ufield = "username"
 
-            # try to obtain structured form from crawler 'forms' if any (caller may pass forms elsewhere)
-            # best-effort: build minimal form object if none available
+           
             form_obj = {"inputs": [{"name": ufield, "value": ""}, {"name": pfield, "value": ""}]}
 
-            # iterate wordlist (generator)
+            
             for pw in _fetch_wordlist(wordlist_url, max_lines=bruteforce_limit):
                 if attempted >= bruteforce_limit:
                     break
@@ -632,7 +596,7 @@ def run_enhanced(http, crawled_pages: List[Tuple[str, Any]], options: Dict[str, 
 
     return findings
 
-# attach enhanced runner to class for convenience
+
 try:
     AuthSessionCheck.run_enhanced = staticmethod(run_enhanced)
 except Exception:

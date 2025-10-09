@@ -18,7 +18,7 @@ class SimpleLoader:
         self.is_running = False
         if self.thread:
             self.thread.join()
-        # Clear the line and show result
+        
         sys.stdout.write('\r' + ' ' * 50 + '\r')
         print(f"✅ {result_message}")
         sys.stdout.flush()

@@ -13,39 +13,35 @@ from reportlab.lib.enums import TA_CENTER, TA_LEFT
 from datetime import datetime
 from collections import defaultdict, Counter
 
-# ---------------------------
-#  HTML Sanitization for PDF
-# ---------------------------
+
 def sanitize_html_for_pdf(text):
     """Clean HTML content for PDF generation"""
     if not isinstance(text, str):
         return str(text) if text is not None else "-"
     
-    # Remove HTML tags completely
+    
     text = re.sub(r'<[^>]+>', '', text)
     
-    # Handle common HTML entities
+    
     text = unescape(text)
     
-    # Replace problematic characters that might cause XML parsing issues
-    text = text.replace('&', '&amp;')  # Must be first
+    
+    text = text.replace('&', '&amp;')
     text = text.replace('<', '&lt;')
     text = text.replace('>', '&gt;')
     text = text.replace('"', '&quot;')
     text = text.replace("'", '&#x27;')
     
-    # Clean up whitespace and newlines
+    
     text = re.sub(r'\s+', ' ', text).strip()
     
-    # Truncate if too long for PDF display
+    
     if len(text) > 1000:
         text = text[:997] + "..."
     
     return text or "-"
 
-# ---------------------------
-#  Palette & helpers
-# ---------------------------
+
 BG_DARK = colors.HexColor("#0b1020")
 CARD_DARK = colors.HexColor("#121832")
 TEXT = colors.HexColor("#0b0f1a")
@@ -71,7 +67,7 @@ def sev_bucket(score: int) -> str:
     return "high"
 
 def dot(radius=2, fill=colors.black):
-    # returns a tiny Flowable circle used inside pills
+    
     class Dot(Flowable):
         def __init__(self):
             Flowable.__init__(self)
@@ -99,36 +95,34 @@ class Pill(Flowable):
         self.radius = r
 
     def wrap(self, availWidth, availHeight):
-        # rough estimate
+        
         w = len(self.text) * 6 + self.padding * 2 + 20
         h = 12 + self.padding * 2
         return (min(w, availWidth), h)
 
     def draw(self):
         w, h = self.wrap(0, 0)
-        # draw rounded rect
+        
         self.canv.setFillColor(self.color)
         self.canv.setStrokeColor(self.color)
         self.canv.roundRect(0, 0, w, h, self.radius, stroke=1, fill=1)
         
-        # draw dot
+        
         dot_x = self.padding + 3
         dot_y = h // 2
         self.canv.setFillColor(colors.white)
         self.canv.circle(dot_x, dot_y, 2, stroke=0, fill=1)
         
-        # draw text
+       
         self.canv.setFillColor(colors.white)
         self.canv.setFont("Helvetica-Bold", 8)
         text_x = dot_x + 8
         text_y = dot_y - 3
         self.canv.drawString(text_x, text_y, self.text)
 
-# ---------------------------
-#  Background / header / footer painters
-# ---------------------------
+
 def draw_header_footer(canvas: pdfcanvas.Canvas, doc):
-    # Footer: page number
+    
     page = canvas.getPageNumber()
     canvas.setFont("Helvetica", 8)
     canvas.setFillColor(MUTED)
@@ -138,7 +132,7 @@ def draw_cover(canvas: pdfcanvas.Canvas, doc, title, subtitle, meta):
     W, H = doc.pagesize
     canvas.saveState()
 
-    # faux-gradient background using two translucent shapes
+    
     canvas.setFillColor(colors.white)
     canvas.rect(0, 0, W, H, stroke=0, fill=1)
 
@@ -152,13 +146,13 @@ def draw_cover(canvas: pdfcanvas.Canvas, doc, title, subtitle, meta):
 
     canvas.setFillAlpha(1)
 
-    # Title block card
+    
     x, y, w, h = 50*mm, H//2-50*mm, W-100*mm, 100*mm
     canvas.setFillColor(colors.white)
     canvas.setStrokeColor(BORDER)
     canvas.roundRect(x, y, w, h, 8, stroke=1, fill=1)
 
-    # Badge
+   
     canvas.setFillColor(colors.HexColor("#f1f5f9"))
     canvas.setStrokeColor(BORDER)
     canvas.roundRect(x+8, y+h-16, 60, 14, 7, stroke=1, fill=1)
@@ -166,7 +160,7 @@ def draw_cover(canvas: pdfcanvas.Canvas, doc, title, subtitle, meta):
     canvas.setFillColor(MUTED)
     canvas.drawString(x+14, y+h-12, "Mini-OWASP Scanner")
 
-    # Headings
+    
     canvas.setFont("Helvetica-Bold", 22)
     canvas.setFillColor(TEXT)
     canvas.drawString(x+14, y+h-34, title)
@@ -175,7 +169,7 @@ def draw_cover(canvas: pdfcanvas.Canvas, doc, title, subtitle, meta):
     canvas.setFillColor(MUTED)
     canvas.drawString(x+14, y+h-50, subtitle)
 
-    # Meta
+    
     canvas.setFont("Helvetica", 10)
     yy = y+h-70
     for line in meta:
@@ -188,9 +182,7 @@ def draw_cover(canvas: pdfcanvas.Canvas, doc, title, subtitle, meta):
 
     canvas.restoreState()
 
-# ---------------------------
-#  Core renderer
-# ---------------------------
+
 def _styles():
     ss = getSampleStyleSheet()
     ss.add(ParagraphStyle(name="H2", fontName="Helvetica-Bold", fontSize=14, textColor=TEXT, spaceAfter=4))
@@ -228,7 +220,7 @@ def _stat_card(value, label):
 def to_pdf(findings: list, generated_at: str, pdf_path: str, title="Security Assessment Report"):
     """Generate a professional PDF report from findings"""
     
-    # Document setup
+   
     doc = SimpleDocTemplate(
         pdf_path, 
         pagesize=A4,
@@ -238,16 +230,16 @@ def to_pdf(findings: list, generated_at: str, pdf_path: str, title="Security Ass
         rightMargin=15*mm
     )
     
-    # Story (content) list
+    
     story = []
     styles = _styles()
     
-    # Calculate stats
+    
     total = len(findings)
     by_severity = Counter(sev_bucket(f.get("severity_score", 0)) for f in findings)
     by_type = Counter(f.get("type", "unknown").split(":")[0] for f in findings)
     
-    # Cover page function
+   
     def cover_page(canvas, doc):
         draw_cover(canvas, doc, title, "Automated Vulnerability Assessment", [
             f"Generated: {datetime.fromisoformat(generated_at.replace('Z', '+00:00')).strftime('%B %d, %Y at %H:%M UTC')}",
@@ -255,11 +247,10 @@ def to_pdf(findings: list, generated_at: str, pdf_path: str, title="Security Ass
             f"High: {by_severity.get('high', 0)} | Medium: {by_severity.get('medium', 0)} | Low: {by_severity.get('low', 0)}"
         ])
     
-    # Executive Summary
+    
     story.append(Paragraph("Executive Summary", styles["H2"]))
     story.append(Spacer(1, 4*mm))
     
-    # Stats cards
     stats_data = [
         [_stat_card(total, "Total Issues"), _stat_card(by_severity.get('high', 0), "High Risk")],
         [_stat_card(by_severity.get('medium', 0), "Medium Risk"), _stat_card(by_severity.get('low', 0), "Low Risk")]
@@ -274,7 +265,7 @@ def to_pdf(findings: list, generated_at: str, pdf_path: str, title="Security Ass
     story.append(stats_table)
     story.append(Spacer(1, 8*mm))
     
-    # Summary text
+  
     if total > 0:
         risk_level = "HIGH" if by_severity.get('high', 0) > 0 else ("MEDIUM" if by_severity.get('medium', 0) > 0 else "LOW")
         summary_text = f"""
@@ -288,25 +279,25 @@ def to_pdf(findings: list, generated_at: str, pdf_path: str, title="Security Ass
     story.append(Paragraph(summary_text.strip(), styles["Body"]))
     story.append(PageBreak())
     
-    # Detailed Findings
+    
     story.append(Paragraph("Detailed Findings", styles["H2"]))
     story.append(Spacer(1, 6*mm))
     
     if not findings:
         story.append(Paragraph("No vulnerabilities were found.", styles["Body"]))
     else:
-        # Group by type
+       
         by_category = defaultdict(list)
         for f in findings:
             category = f.get("type", "unknown").split(":")[0]
             by_category[category].append(f)
         
         for category, items in by_category.items():
-            # Category header
+          
             story.append(Paragraph(f"{category.title().replace('_', ' ')} ({len(items)} issues)", styles["H3"]))
             story.append(Spacer(1, 3*mm))
             
-            # Sort by severity (high first)
+            
             items.sort(key=lambda x: -x.get("severity_score", 0))
             
             for it in items:
@@ -323,7 +314,7 @@ def to_pdf(findings: list, generated_at: str, pdf_path: str, title="Security Ass
                     ("BOTTOMPADDING",(0,0),(-1,-1),0),
                 ]))
 
-                # Sanitize all text fields before creating paragraphs
+                
                 rows = [
                     ["URL", Paragraph(sanitize_html_for_pdf(it.get("url")), styles["Body"])],
                     ["Param", Paragraph(sanitize_html_for_pdf(it.get("param")), styles["Body"])],
@@ -355,7 +346,7 @@ def to_pdf(findings: list, generated_at: str, pdf_path: str, title="Security Ass
     
     story.append(Paragraph(methodology_text.strip(), styles["Body"]))
     
-    # ✅ Build the PDF with correct parameters - REMOVE canvasmaker parameter
+   
     doc.build(story, onFirstPage=cover_page, onLaterPages=draw_header_footer)
     
     print(f"✅ PDF report generated: {pdf_path}")

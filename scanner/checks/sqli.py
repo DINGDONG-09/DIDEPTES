@@ -21,7 +21,7 @@ def sqli_payloads(base_payloads=None):
 
     out = list(base_payloads)
 
-    # Boolean-based blind payloads
+    
     blind_payloads = [
         "' AND '1'='1",
         "' AND '1'='2",
@@ -32,7 +32,7 @@ def sqli_payloads(base_payloads=None):
     ]
     out.extend(blind_payloads)
 
-    # Time-based blind (limited, safe)
+   
     time_payloads = [
         "' OR SLEEP(2)--",
         "\" OR SLEEP(2)--",
@@ -40,7 +40,7 @@ def sqli_payloads(base_payloads=None):
     ]
     out.extend(time_payloads)
 
-    # Deduplicate
+    
     seen = set()
     res = []
     for p in out:
@@ -185,8 +185,8 @@ class SQLiCheck:
             if pattern.search(response.text):
                 return True
 
-        # Time-based detection heuristic
-        if elapsed > 1.5:  # threshold ~2s payloads
+        
+        if elapsed > 1.5: 
             return True
 
         return False
